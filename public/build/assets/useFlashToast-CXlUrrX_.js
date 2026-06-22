@@ -1,1 +1,0 @@
-import{z as o,p as t,A as a}from"./app-KdIgjN_7.js";function i(){const s=a();o(()=>s.props.flash?.success,r=>{r&&t.success(r)},{immediate:!0}),o(()=>s.props.flash?.error,r=>{r&&t.error(r)},{immediate:!0})}function c(s){const r=Object.values(s??{})[0];r&&t.error(Array.isArray(r)?r[0]:r)}export{c as t,i as u};

@@ -51,6 +51,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::get('users', [UserController::class, 'index'])->name('users');
         Route::get('reviews', [ReviewController::class, 'index'])->name('reviews');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings');
+        Route::put('settings/app', [SettingsController::class, 'updateAppSettings'])->name('settings.app.update');
         Route::post('settings/hero-sections', [SettingsController::class, 'storeHeroSection'])->name('settings.hero-sections.store');
         Route::get('settings/hero-sections/{heroSection}/edit', [SettingsController::class, 'editHeroSection'])->name('settings.hero-sections.edit');
         Route::put('settings/hero-sections/{heroSection}', [SettingsController::class, 'updateHeroSection'])->name('settings.hero-sections.update');

@@ -8,7 +8,11 @@ import {
     useFlashToast,
 } from "../../composables/useFlashToast";
 
-defineProps({
+const props = defineProps({
+    appDownloadUrl: {
+        type: String,
+        default: "",
+    },
     heroSections: {
         type: Array,
         default: () => [],
@@ -16,6 +20,17 @@ defineProps({
 });
 
 useFlashToast();
+
+const appSettingsForm = useForm({
+    app_download_url: props.appDownloadUrl ?? "",
+});
+
+const submitAppSettings = () => {
+    appSettingsForm.put("/admin/settings/app", {
+        preserveScroll: true,
+        onError: (errors) => toastFormErrors(errors),
+    });
+};
 
 const mediaPreview = ref(null);
 const mediaInput = ref(null);
@@ -76,8 +91,53 @@ const deleteSection = (section) => {
 <template>
     <AdminLayout
         title="Settings"
-        description="Configure app content shown to mobile users, including the hero banner."
+        description="Configure app content shown to mobile users and the public website download link."
     >
+        <section class="settings-shell app-settings-shell">
+            <header class="section-header">
+                <div>
+                    <h2>App Download Link</h2>
+                    <p>
+                        Set the URL used by the Download button on the public
+                        home page. Use a direct link to your APK, App Store, or
+                        Play Store listing.
+                    </p>
+                </div>
+            </header>
+
+            <form class="app-settings-form" @submit.prevent="submitAppSettings">
+                <div class="field full">
+                    <label for="app-download-url">Download URL</label>
+                    <input
+                        id="app-download-url"
+                        v-model="appSettingsForm.app_download_url"
+                        type="url"
+                        placeholder="https://example.com/i-baao.apk"
+                    />
+                    <p
+                        v-if="appSettingsForm.errors.app_download_url"
+                        class="field-error"
+                    >
+                        {{ appSettingsForm.errors.app_download_url }}
+                    </p>
+                </div>
+
+                <div class="form-actions">
+                    <button
+                        type="submit"
+                        class="submit-btn"
+                        :disabled="appSettingsForm.processing"
+                    >
+                        {{
+                            appSettingsForm.processing
+                                ? "Saving..."
+                                : "Save Download Link"
+                        }}
+                    </button>
+                </div>
+            </form>
+        </section>
+
         <section class="settings-shell">
             <header class="section-header">
                 <div>
@@ -291,6 +351,14 @@ const deleteSection = (section) => {
     border: 1px solid #e2e8f0;
     border-radius: 0.85rem;
     overflow: hidden;
+}
+
+.app-settings-shell {
+    margin-bottom: 1.25rem;
+}
+
+.app-settings-form {
+    padding: 1.25rem;
 }
 
 .section-header {

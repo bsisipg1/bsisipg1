@@ -6,6 +6,7 @@ use App\Enums\LocationCategory;
 use App\Enums\LocationGalleryType;
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
+use App\Models\AppSetting;
 use App\Models\Event;
 use App\Models\Location;
 use App\Models\LocationRating;
@@ -46,6 +47,7 @@ class HomeController extends Controller
         )->values()->all();
 
         return Inertia::render('public/home', [
+            'appDownloadUrl' => AppSetting::appDownloadUrl(),
             'locations' => $locations->values()->all(),
             'categories' => $categories,
             'events' => Event::query()

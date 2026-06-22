@@ -7,8 +7,6 @@ import {
     ref,
     watch,
 } from "vue";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import { Link } from "@inertiajs/vue3";
 
 const props = defineProps({
@@ -36,11 +34,13 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    appDownloadUrl: {
+        type: String,
+        default: "",
+    },
 });
 
 const appLogo = "/assets/images/applogo.png";
-const appDownloadUrl =
-    "https://github.com/baklod/bnapp/releases/download/V2/i-baao.apk";
 
 const mobileAppFeatures = [
     {
@@ -71,48 +71,21 @@ const mobileAppFeatures = [
 
 const navLinks = [
     { name: "Home", href: "/" },
-    { name: "Map", href: "#map" },
     { name: "Destinations", href: "#destinations" },
     { name: "Events", href: "#events" },
     { name: "About", href: "#about" },
 ];
 
-const categoryColors = {
-    nature: "#2a9d8f",
-    culture: "#e2a30b",
-    food: "#f06a2a",
-    resorts: "#2f9fc7",
-    religious: "#7c3aed",
-    historical: "#b45309",
-    parks: "#16a34a",
-    lakes_water: "#0891b2",
-    landmarks: "#dc2626",
-    markets: "#ca8a04",
-    adventure: "#ea580c",
-    museums: "#9333ea",
-    accommodation: "#2563eb",
-    entertainment: "#db2777",
-    wellness: "#0d9488",
-    shopping: "#4f46e5",
-    community: "#64748b",
-};
-
-const mapElement = ref(null);
-const heroSpots = ref([...props.locations]);
-const isCarouselAnimating = ref(false);
-const activeHeroSpot = computed(() => heroSpots.value[0] ?? null);
 const searchTerm = ref("");
+const typingPlaceholder = ref("Search places, resorts, restaurants...");
+const searchInputFocused = ref(false);
+let typingTimer = null;
 const activeCategory = ref("all");
 const selectedDestinationId = ref(props.locations[0]?.id ?? null);
 const mobileMenuOpen = ref(false);
 const navScrolled = ref(false);
 const downloadsOpen = ref(false);
 const downloadsDropdownRef = ref(null);
-
-let leafletMap = null;
-let markerLayer = null;
-let skipNextDestinationFocus = false;
-const markerRegistry = new Map();
 
 const filteredDestinations = computed(() => {
     const term = searchTerm.value.trim().toLowerCase();
@@ -170,15 +143,6 @@ const destinationSwipeThreshold = 70;
 let destinationMouseMoveHandler = null;
 let destinationMouseUpHandler = null;
 
-const mapLegend = computed(() =>
-    props.categories
-        .filter((category) => category.key !== "all")
-        .map((category) => ({
-            label: category.label,
-            color: categoryColors[category.key] ?? "#64748b",
-        })),
-);
-
 const resultMessage = computed(() => {
     if (!searchTerm.value.trim()) {
         if (props.locations.length === 0) {
@@ -203,6 +167,117 @@ const averageRating = computed(
         props.reviewSummary.average_rating ??
         null,
 );
+
+const featuredDestinations = computed(() => props.locations.slice(0, 6));
+
+const searchableLocationNames = computed(() =>
+    [
+        ...new Set(
+            props.locations
+                .map((location) => location.name?.trim())
+                .filter(Boolean),
+        ),
+    ],
+);
+
+function stopTypingAnimation() {
+    if (typingTimer !== null) {
+        clearTimeout(typingTimer);
+        typingTimer = null;
+    }
+}
+
+function startTypingAnimation() {
+    stopTypingAnimation();
+
+    const names = searchableLocationNames.value;
+
+    if (searchInputFocused.value || searchTerm.value.trim()) {
+        return;
+    }
+
+    if (names.length === 0) {
+        typingPlaceholder.value = "Search places, resorts, restaurants...";
+        return;
+    }
+
+    let nameIndex = 0;
+    let charIndex = 0;
+    let deleting = false;
+
+    const run = () => {
+        if (searchInputFocused.value || searchTerm.value.trim()) {
+            stopTypingAnimation();
+            return;
+        }
+
+        const current = names[nameIndex % names.length];
+        const prefix = "Search ";
+
+        if (!deleting) {
+            charIndex += 1;
+            typingPlaceholder.value = `${prefix}${current.slice(0, charIndex)}...`;
+
+            if (charIndex >= current.length) {
+                deleting = true;
+                typingTimer = window.setTimeout(run, 1800);
+            } else {
+                typingTimer = window.setTimeout(run, 85);
+            }
+
+            return;
+        }
+
+        charIndex -= 1;
+
+        if (charIndex <= 0) {
+            deleting = false;
+            nameIndex += 1;
+            typingPlaceholder.value = `${prefix}...`;
+            typingTimer = window.setTimeout(run, 450);
+            return;
+        }
+
+        typingPlaceholder.value = `${prefix}${current.slice(0, charIndex)}...`;
+        typingTimer = window.setTimeout(run, 45);
+    };
+
+    typingPlaceholder.value = "Search ...";
+    typingTimer = window.setTimeout(run, 500);
+}
+
+function handleSearchFocus() {
+    searchInputFocused.value = true;
+    stopTypingAnimation();
+    typingPlaceholder.value = "Search places, resorts, restaurants...";
+}
+
+function handleSearchBlur() {
+    searchInputFocused.value = false;
+    startTypingAnimation();
+}
+
+const heroStats = computed(() => [
+    {
+        value: props.locations.length,
+        label: props.locations.length === 1 ? "Destination" : "Destinations",
+    },
+    {
+        value: props.categories.filter((category) => category.key !== "all")
+            .length,
+        label: "Categories",
+    },
+    {
+        value: props.events.length,
+        label: props.events.length === 1 ? "Event" : "Events",
+    },
+    {
+        value: props.reviewSummary.average_rating
+            ? props.reviewSummary.average_rating.toFixed(1)
+            : "—",
+        label: "Avg. Rating",
+    },
+]);
 
 function formatCoordinates(latitude, longitude) {
     return `${Number(latitude).toFixed(5)}, ${Number(longitude).toFixed(5)}`;
@@ -239,24 +314,6 @@ function galleryLayoutClass(destination) {
     };
 }
 
-function markerFill(category, isActive) {
-    if (isActive) {
-        return "#1f7a6e";
-    }
-
-    return categoryColors[category] ?? "#2a9d8f";
-}
-
-function markerStyle(destination, isActive = false) {
-    return {
-        radius: isActive ? 10 : 8,
-        color: "#ffffff",
-        weight: 2,
-        fillColor: markerFill(destination.category, isActive),
-        fillOpacity: 1,
-    };
-}
-
 function syncSelectionAfterFilter() {
     if (filteredDestinations.value.length === 0) {
         return;
@@ -267,17 +324,22 @@ function syncSelectionAfterFilter() {
     );
 
     if (!hasSelected) {
-        skipNextDestinationFocus = true;
         selectedDestinationId.value = filteredDestinations.value[0].id;
     }
 }
 
-function selectCategory(key) {
-    activeCategory.value = key;
-}
-
 function selectDestination(destinationId) {
     selectedDestinationId.value = destinationId;
+}
+
+function exploreDestination(destinationId) {
+    selectDestination(destinationId);
+
+    nextTick(() => {
+        document
+            .getElementById("destinations")
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
 }
 
 function goToPreviousDestination() {
@@ -385,149 +447,20 @@ function handleDestinationMouseDown(event) {
     document.addEventListener("mouseup", destinationMouseUpHandler);
 }
 
-function cycleHeroSpot(index) {
-    if (isCarouselAnimating.value) return;
-    isCarouselAnimating.value = true;
-
-    const item = heroSpots.value.splice(index, 1)[0];
-    heroSpots.value.push(item);
-
-    setTimeout(() => {
-        isCarouselAnimating.value = false;
-    }, 500);
-}
-
-function setMarkerHighlight() {
-    markerRegistry.forEach((entry, id) => {
-        entry.marker.setStyle(
-            markerStyle(entry.destination, id === selectedDestinationId.value),
-        );
-    });
-}
-
-function renderLeafletMarkers(shouldFitBounds = false) {
-    if (!leafletMap || !markerLayer) {
-        return;
-    }
-
-    markerLayer.clearLayers();
-    markerRegistry.clear();
-
-    if (filteredDestinations.value.length === 0) {
-        return;
-    }
-
-    filteredDestinations.value.forEach((destination) => {
-        const marker = L.circleMarker(
-            [destination.latitude, destination.longitude],
-            markerStyle(
-                destination,
-                destination.id === selectedDestinationId.value,
-            ),
-        );
-
-        marker.bindTooltip(destination.map_label || destination.name, {
-            direction: "top",
-            offset: [0, -8],
-            opacity: 0.95,
-            autoPan: false,
-        });
-
-        marker.on("click", () => {
-            selectDestination(destination.id);
-        });
-
-        marker.addTo(markerLayer);
-        markerRegistry.set(destination.id, { marker, destination });
-    });
-
-    if (shouldFitBounds) {
-        const bounds = L.latLngBounds(
-            filteredDestinations.value.map((destination) => [
-                destination.latitude,
-                destination.longitude,
-            ]),
-        );
-
-        if (bounds.isValid()) {
-            leafletMap.fitBounds(bounds.pad(0.34), {
-                animate: false,
-            });
-        }
-    }
-
-    setMarkerHighlight();
-}
-
-function focusActiveDestination(animate = true) {
-    const active = activeDestination.value;
-
-    if (!leafletMap || !active) {
-        return;
-    }
-
-    leafletMap.flyTo(
-        [active.latitude, active.longitude],
-        Math.max(leafletMap.getZoom(), 14),
-        {
-            animate,
-            duration: animate ? 0.5 : 0,
-        },
-    );
-
-    setMarkerHighlight();
-}
-
-function initializeLeafletMap() {
-    if (!mapElement.value || leafletMap) {
-        return;
-    }
-
-    leafletMap = L.map(mapElement.value, {
-        zoomControl: false,
-        scrollWheelZoom: false,
-        attributionControl: true,
-    }).setView([13.4548, 123.3658], 13);
-
-    leafletMap.on("mouseover", () => {
-        leafletMap.scrollWheelZoom.enable();
-    });
-    leafletMap.on("mouseout", () => {
-        leafletMap.scrollWheelZoom.disable();
-    });
-
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution:
-            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    }).addTo(leafletMap);
-
-    markerLayer = L.layerGroup().addTo(leafletMap);
-
-    renderLeafletMarkers(true);
-    focusActiveDestination(false);
-    leafletMap.invalidateSize();
-}
-
-watch(activeCategory, () => {
-    syncSelectionAfterFilter();
-    renderLeafletMarkers(true);
-});
-
 watch(searchTerm, () => {
     syncSelectionAfterFilter();
-    renderLeafletMarkers(false);
+
+    if (searchTerm.value.trim()) {
+        stopTypingAnimation();
+    } else if (!searchInputFocused.value) {
+        startTypingAnimation();
+    }
 });
 
-watch(selectedDestinationId, () => {
-    setMarkerHighlight();
-
-    if (skipNextDestinationFocus) {
-        skipNextDestinationFocus = false;
-        return;
+watch(searchableLocationNames, () => {
+    if (!searchInputFocused.value && !searchTerm.value.trim()) {
+        startTypingAnimation();
     }
-
-    focusActiveDestination();
 });
 
 function handleScroll() {
@@ -552,10 +485,10 @@ onMounted(() => {
         history.replaceState(null, "", window.location.pathname);
     }
 
-    initializeLeafletMap();
     window.addEventListener("scroll", handleScroll, { passive: true });
     document.addEventListener("click", handleDocumentClick);
     handleScroll();
+    startTypingAnimation();
 });
 
 onBeforeUnmount(() => {
@@ -568,13 +501,7 @@ onBeforeUnmount(() => {
 
     window.removeEventListener("scroll", handleScroll);
     document.removeEventListener("click", handleDocumentClick);
-    markerRegistry.clear();
-
-    if (leafletMap) {
-        leafletMap.remove();
-        leafletMap = null;
-        markerLayer = null;
-    }
+    stopTypingAnimation();
 });
 </script>
 
@@ -589,14 +516,10 @@ onBeforeUnmount(() => {
         >
             <div class="top-nav">
                 <a class="brand" href="/">
-                    <img
-                        class="brand-icon"
-                        :src="appLogo"
-                        alt="i-Baao logo"
-                    />
+                    <img class="brand-icon" :src="appLogo" alt="i-Baao logo" />
                     <span class="brand-copy">
-                        <strong>Tourism Mapping System</strong>
-                        <small>Municipality of Baao</small>
+                        <strong>Explore Baao</strong>
+                        <small>Tourism Mapping System</small>
                     </span>
                 </a>
 
@@ -613,6 +536,7 @@ onBeforeUnmount(() => {
 
                 <div class="auth-actions">
                     <div
+                        v-if="appDownloadUrl"
                         ref="downloadsDropdownRef"
                         class="downloads-dropdown"
                     >
@@ -623,7 +547,7 @@ onBeforeUnmount(() => {
                             aria-haspopup="true"
                             @click.stop="toggleDownloads"
                         >
-                            Downloads
+                            Get the App
                             <span
                                 class="downloads-chevron"
                                 :class="{ open: downloadsOpen }"
@@ -650,7 +574,7 @@ onBeforeUnmount(() => {
                                     />
                                     <span class="downloads-item-copy">
                                         <strong>i-Baao Android App</strong>
-                                        <small>Download APK (V2)</small>
+                                        <small>Free download</small>
                                     </span>
                                 </a>
                             </div>
@@ -686,7 +610,7 @@ onBeforeUnmount(() => {
                     >
                         {{ link.name }}
                     </a>
-                    <div class="mobile-download-card">
+                    <div v-if="appDownloadUrl" class="mobile-download-card">
                         <p class="mobile-section-label">Get the App</p>
                         <a
                             :href="appDownloadUrl"
@@ -702,7 +626,7 @@ onBeforeUnmount(() => {
                             />
                             <span class="mobile-download-copy">
                                 <strong>Download i-Baao App</strong>
-                                <small>Android APK (V2)</small>
+                                <small>Free for Android</small>
                             </span>
                             <span class="mobile-download-arrow">↓</span>
                         </a>
@@ -720,196 +644,216 @@ onBeforeUnmount(() => {
             </Transition>
         </header>
 
-        <section
-            class="hero-section"
-            :style="{
-                backgroundImage: activeHeroSpot
-                    ? 'linear-gradient(to right, rgba(15, 23, 42, 0.72) 0%, rgba(15, 23, 42, 0.4) 50%, rgba(0, 0, 0, 0.12) 100%), url(' +
-                      activeHeroSpot.image_url +
-                      ')'
-                    : 'linear-gradient(135deg, #059669 0%, #10b981 100%)',
-            }"
-        >
-            <div class="hero-grid"></div>
+        <section class="hero-section">
+            <div class="hero-inner">
+                <!-- Left: text content -->
+                <div class="hero-content">
+                    <p class="hero-pill">
+                        <span class="hero-pill-dot"></span>
+                        Baao, Camarines Sur
+                    </p>
+                    <h1>
+                        Discover the
+                        <span>Heart of Baao</span>
+                    </h1>
+                    <p class="hero-subtitle">
+                        Your gateway to the best of Baao — from serene lakeside
+                        views and heritage landmarks to local food spots and hidden
+                        resorts. Plan your trip and start exploring.
+                    </p>
 
-            <div class="hero-content">
-                <p class="hero-pill">Explore Baao, Camarines Sur</p>
-                <h1>
-                    Discover the<br />
-                    <span>Heart of Baao</span>
-                </h1>
-                <p class="hero-subtitle">
-                    Your gateway to the best of Baao — from serene lakeside
-                    views and heritage landmarks to local food spots and hidden
-                    resorts. Start exploring now.
-                </p>
+                    <form class="search-shell" @submit.prevent>
+                        <span class="search-icon">⌕</span>
+                        <input
+                            v-model="searchTerm"
+                            type="search"
+                            :placeholder="typingPlaceholder"
+                            @focus="handleSearchFocus"
+                            @blur="handleSearchBlur"
+                        />
+                        <button type="submit">Search</button>
+                    </form>
 
-                <form class="search-shell" @submit.prevent>
-                    <span class="search-icon">⌕</span>
-                    <input
-                        v-model="searchTerm"
-                        type="search"
-                        placeholder="Search places, resorts, restaurants..."
-                    />
-                    <button type="submit">Search</button>
-                </form>
+                    <p class="search-result">{{ resultMessage }}</p>
 
-                <p class="search-result">{{ resultMessage }}</p>
-            </div>
-
-            <div v-if="heroSpots.length" class="hero-spots-carousel">
-                <TransitionGroup name="carousel-queue">
-                    <div
-                        v-for="(dest, index) in heroSpots"
-                        :key="dest.id"
-                        class="spot-card-mini"
-                        :class="{
-                            'spot-card-mini-active': index === 0,
-                        }"
-                        @click="cycleHeroSpot(index)"
-                    >
-                        <img :src="dest.image_url" :alt="dest.name" />
-                        <div class="spot-card-mini-info">
-                            <small
-                                >{{ dest.category_label }} &bull; Camarines
-                                Sur</small
-                            >
-                            <strong>{{ dest.name }}</strong>
+                    <dl class="hero-stats">
+                        <div
+                            v-for="stat in heroStats"
+                            :key="stat.label"
+                            class="hero-stat"
+                        >
+                            <dt>{{ stat.value }}</dt>
+                            <dd>{{ stat.label }}</dd>
                         </div>
-                    </div>
-                </TransitionGroup>
+                    </dl>
+                </div>
+
+                <!-- Right: traveler image (studio white-bg, blends into honeycomb via multiply) -->
+                <div class="hero-visual">
+                    <img
+                        src="/assets/images/herosection.png"
+                        alt="Woman traveler ready to explore"
+                        class="hero-traveler-img"
+                    />
+                </div>
             </div>
+
         </section>
 
         <main class="main-content">
-            <section class="section-shell map-section" id="map">
-                <p class="section-pill section-pill-peach">Explore</p>
-                <h2>Interactive Map</h2>
-                <p class="section-subtitle">
-                    Discover attractions, restaurants, and hidden gems across
-                    Baao
-                </p>
+            <!-- WHY VISIT BAAO -->
+            <section class="why-visit-section">
+                <div class="section-shell">
+                    <p class="section-pill section-pill-mint">Why Visit</p>
+                    <h2>Experience Baao Like Never Before</h2>
+                    <p class="section-subtitle">
+                        A hidden gem in Camarines Sur — rich in nature, heritage, and warm Filipino hospitality
+                    </p>
+                    <div class="why-list">
+                        <div class="why-item">
+                            <span class="why-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7c3-2 6-2 9 0s6 2 9 0"/><path d="M3 12c3-2 6-2 9 0s6 2 9 0"/><path d="M3 17c3-2 6-2 9 0s6 2 9 0"/></svg>
+                            </span>
+                            <div class="why-text">
+                                <h3>Natural Wonders</h3>
+                                <p>Lakeside views at Lake Buhi, scenic river trails, and lush countryside — Baao's landscapes are breathtaking and largely undiscovered.</p>
+                            </div>
+                        </div>
+                        <div class="why-item">
+                            <span class="why-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                            </span>
+                            <div class="why-text">
+                                <h3>Rich Heritage</h3>
+                                <p>Centuries of history await at Baao's heritage churches, ancestral homes, and cultural landmarks that carry the town's proud story.</p>
+                            </div>
+                        </div>
+                        <div class="why-item">
+                            <span class="why-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+                            </span>
+                            <div class="why-text">
+                                <h3>Local Cuisine</h3>
+                                <p>Authentic Bicolano flavors — Laing, Bicol Express, and freshwater fish dishes unique to the riverside markets of Baao.</p>
+                            </div>
+                        </div>
+                        <div class="why-item">
+                            <span class="why-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                            </span>
+                            <div class="why-text">
+                                <h3>Festivals & Culture</h3>
+                                <p>Vibrant local festivals, traditional celebrations, and community events that showcase the heart and soul of Baao's people.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
-                <div class="category-row">
+            <!-- EXPLORE BY CATEGORY -->
+            <section class="category-explore-section section-shell">
+                <p class="section-pill section-pill-blue">Explore</p>
+                <h2>Browse by Category</h2>
+                <p class="section-subtitle">Find exactly what you're looking for — nature, food, heritage, and more</p>
+                <div class="cat-explore-grid">
                     <button
-                        v-for="category in categories"
+                        v-for="category in categories.filter(c => c.key !== 'all')"
                         :key="category.key"
                         type="button"
-                        class="category-chip"
-                        :class="{
-                            'category-chip-active':
-                                category.key === activeCategory,
-                        }"
-                        @click="selectCategory(category.key)"
+                        class="cat-explore-card"
+                        @click="selectCategory(category.key); $nextTick(() => document.getElementById('destinations')?.scrollIntoView({ behavior: 'smooth' }))"
                     >
-                        {{ category.label }}
+                        <span class="cat-explore-icon">
+                            <span v-if="category.key === 'nature'">🌿</span>
+                            <span v-else-if="category.key === 'culture'">🎭</span>
+                            <span v-else-if="category.key === 'food'">🍽️</span>
+                            <span v-else-if="category.key === 'resorts'">🏨</span>
+                            <span v-else-if="category.key === 'religious'">⛪</span>
+                            <span v-else-if="category.key === 'historical'">🏛️</span>
+                            <span v-else-if="category.key === 'parks'">🌳</span>
+                            <span v-else-if="category.key === 'lakes_water'">💧</span>
+                            <span v-else-if="category.key === 'landmarks'">📍</span>
+                            <span v-else-if="category.key === 'markets'">🛒</span>
+                            <span v-else-if="category.key === 'adventure'">🧗</span>
+                            <span v-else-if="category.key === 'museums'">🖼️</span>
+                            <span v-else-if="category.key === 'accommodation'">🏩</span>
+                            <span v-else-if="category.key === 'entertainment'">🎪</span>
+                            <span v-else-if="category.key === 'wellness'">🧘</span>
+                            <span v-else-if="category.key === 'shopping'">🛍️</span>
+                            <span v-else>📌</span>
+                        </span>
+                        <span class="cat-explore-label">{{ category.label }}</span>
+                        <span class="cat-explore-count">
+                            {{ locations.filter(l => l.category === category.key).length }} spot{{ locations.filter(l => l.category === category.key).length !== 1 ? 's' : '' }}
+                        </span>
                     </button>
                 </div>
+            </section>
 
-                <div class="map-layout">
-                    <aside class="spots-sidebar">
-                        <div class="sidebar-head">
-                            <h3>Available Spots</h3>
-                            <span
-                                >{{
-                                    filteredDestinations.length
-                                }}
-                                locations</span
-                            >
-                        </div>
-                        <ul class="spot-list">
-                            <li
-                                v-if="filteredDestinations.length === 0"
-                                class="spot-empty"
-                            >
-                                No locations match your search.
-                            </li>
-                            <li
-                                v-for="dest in filteredDestinations"
-                                :key="dest.id"
-                                :class="{
-                                    'spot-active':
-                                        selectedDestinationId === dest.id,
-                                }"
-                                @click="selectDestination(dest.id)"
-                            >
-                                <div class="spot-info">
-                                    <strong>{{ dest.name }}</strong>
-                                    <small
-                                        >{{ dest.map_label }} &bull;
-                                        {{ dest.category_label }}</small
-                                    >
-                                </div>
-                                <span class="spot-arrow">→</span>
-                            </li>
-                        </ul>
-                    </aside>
-
-                    <div class="map-card outline-card">
-                        <div class="map-card-head">
-                            <h3>Interactive Map</h3>
-                            <ul class="map-legend">
-                                <li
-                                    v-for="legend in mapLegend"
-                                    :key="legend.label"
-                                >
-                                    <span
-                                        :style="{ background: legend.color }"
-                                    ></span>
-                                    {{ legend.label }}
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="map-canvas-wrap">
-                            <div ref="mapElement" class="leaflet-map"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="mobile-app-feature">
-                    <div class="mobile-app-intro">
-                        <p class="section-pill section-pill-blue">Mobile App</p>
-                        <h3>Introducing the i-Baao App</h3>
-                        <p>
-                            Take Baao tourism with you wherever you go. The
-                            official mobile app brings the interactive map,
-                            destinations, and local highlights right to your
-                            fingertips.
-                        </p>
-                        <a
-                            :href="appDownloadUrl"
-                            class="solid-btn mobile-app-download-btn"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                        >
-                            Download Android App
-                        </a>
-                    </div>
-
-                    <ul class="mobile-app-feature-list">
-                        <li
-                            v-for="feature in mobileAppFeatures"
-                            :key="feature.title"
-                        >
-                            <span class="mobile-app-feature-icon">{{
-                                feature.icon
-                            }}</span>
+            <!-- TRAVEL TIPS -->
+            <section class="travel-tips-section section-shell">
+                <p class="section-pill section-pill-gold">Visitor Guide</p>
+                <h2>Travel Tips for Baao</h2>
+                <p class="section-subtitle">Plan your trip better with these quick essentials</p>
+                <div class="tips-list">
+                    <div class="tips-col">
+                        <div class="tip-item">
+                            <span class="tip-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                            </span>
                             <div>
-                                <strong>{{ feature.title }}</strong>
-                                <p>{{ feature.description }}</p>
+                                <h4>Best Time to Visit</h4>
+                                <p>November to May — dry season means clear skies, perfect for outdoor exploration and lake activities.</p>
                             </div>
-                        </li>
-                    </ul>
-
-                    <div class="mobile-app-preview">
-                        <img
-                            class="mobile-app-preview-logo"
-                            :src="appLogo"
-                            alt="i-Baao app logo"
-                        />
-                        <strong>i-Baao</strong>
-                        <small>Official Tourism App</small>
-                        <span class="mobile-app-version">Version 2</span>
+                        </div>
+                        <div class="tip-item">
+                            <span class="tip-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
+                            </span>
+                            <div>
+                                <h4>Getting There</h4>
+                                <p>Bus from Manila to Naga City (8–10 hrs), then jeepney or tricycle to Baao — about 30 minutes from Naga.</p>
+                            </div>
+                        </div>
+                        <div class="tip-item">
+                            <span class="tip-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                            </span>
+                            <div>
+                                <h4>Budget Guide</h4>
+                                <p>Most attractions are free or low-cost. Expect ₱500–₱1,500/day for food and transport.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tips-divider"></div>
+                    <div class="tips-col">
+                        <div class="tip-item">
+                            <span class="tip-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                            </span>
+                            <div>
+                                <h4>Use the i-Baao App</h4>
+                                <p>Download the official i-Baao app for offline guides, navigation, and real-time event updates.</p>
+                            </div>
+                        </div>
+                        <div class="tip-item">
+                            <span class="tip-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 17.58A5 5 0 0 0 18 8h-1.26A8 8 0 1 0 4 16.25"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="8" y1="20" x2="8.01" y2="20"/><line x1="12" y1="18" x2="12.01" y2="18"/><line x1="12" y1="22" x2="12.01" y2="22"/><line x1="16" y1="16" x2="16.01" y2="16"/><line x1="16" y1="20" x2="16.01" y2="20"/></svg>
+                            </span>
+                            <div>
+                                <h4>Weather & Clothing</h4>
+                                <p>Tropical climate — light clothing, sunscreen, and a rain jacket for June–October rainy season.</p>
+                            </div>
+                        </div>
+                        <div class="tip-item">
+                            <span class="tip-icon-wrap">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            </span>
+                            <div>
+                                <h4>Local Etiquette</h4>
+                                <p>"Magandang araw" goes a long way. Always ask permission before photographing locals.</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -920,6 +864,10 @@ onBeforeUnmount(() => {
             >
                 <p class="section-pill section-pill-mint">
                     Destination Details
+                </p>
+                <h2>Take a Closer Look</h2>
+                <p class="section-subtitle">
+                    Browse photos, ratings, and key details for each place
                 </p>
 
                 <div
@@ -957,151 +905,205 @@ onBeforeUnmount(() => {
                             @touchend="handleDestinationTouchEnd"
                             @mousedown="handleDestinationMouseDown"
                         >
-                        <div
-                            class="destination-swipe-track"
-                            :class="{ dragging: isDestinationDragging }"
-                            :style="{
-                                transform: `translateX(calc(-${activeDestinationIndex * 100}% + ${destinationSwipeDeltaX}px))`,
-                            }"
-                        >
-                            <article
-                                v-for="destination in filteredDestinations"
-                                :key="destination.id"
-                                class="destination-slide"
+                            <div
+                                class="destination-swipe-track"
+                                :class="{ dragging: isDestinationDragging }"
+                                :style="{
+                                    transform: `translateX(calc(-${activeDestinationIndex * 100}% + ${destinationSwipeDeltaX}px))`,
+                                }"
                             >
-                                <div class="destination-layout">
-                                    <div
-                                        class="destination-gallery"
-                                        :class="galleryLayoutClass(destination)"
-                                    >
+                                <article
+                                    v-for="destination in filteredDestinations"
+                                    :key="destination.id"
+                                    class="destination-slide"
+                                >
+                                    <div class="destination-layout">
                                         <div
-                                            v-if="getFeaturedGalleryImages(destination)[0]"
-                                            class="main-photo has-image"
-                                            :style="{
-                                                backgroundImage: `url('${getFeaturedGalleryImages(destination)[0]}')`,
-                                            }"
-                                        ></div>
-                                        <div
-                                            v-else
-                                            class="main-photo gallery-placeholder"
-                                        >
-                                            No image available
-                                        </div>
-
-                                        <div
-                                            v-if="getFeaturedGalleryImages(destination)[1]"
-                                            class="side-photo side-photo-top has-image"
-                                            :style="{
-                                                backgroundImage: `url('${getFeaturedGalleryImages(destination)[1]}')`,
-                                            }"
-                                        ></div>
-
-                                        <div
-                                            v-if="getFeaturedGalleryImages(destination)[2]"
-                                            class="side-photo side-photo-bottom has-image"
-                                            :style="{
-                                                backgroundImage: `url('${getFeaturedGalleryImages(destination)[2]}')`,
-                                            }"
-                                        ></div>
-
-                                        <div
-                                            v-if="getExtraGalleryImages(destination).length"
-                                            class="gallery-extra"
+                                            class="destination-gallery"
+                                            :class="
+                                                galleryLayoutClass(destination)
+                                            "
                                         >
                                             <div
-                                                v-for="(image, index) in getExtraGalleryImages(destination)"
-                                                :key="`${destination.id}-gallery-${index}`"
-                                                class="gallery-thumb has-image"
+                                                v-if="
+                                                    getFeaturedGalleryImages(
+                                                        destination,
+                                                    )[0]
+                                                "
+                                                class="main-photo has-image"
                                                 :style="{
-                                                    backgroundImage: `url('${image}')`,
+                                                    backgroundImage: `url('${getFeaturedGalleryImages(destination)[0]}')`,
                                                 }"
-                                                :title="`${destination.name} gallery photo ${index + 4}`"
                                             ></div>
+                                            <div
+                                                v-else
+                                                class="main-photo gallery-placeholder"
+                                            >
+                                                No image available
+                                            </div>
+
+                                            <div
+                                                v-if="
+                                                    getFeaturedGalleryImages(
+                                                        destination,
+                                                    )[1]
+                                                "
+                                                class="side-photo side-photo-top has-image"
+                                                :style="{
+                                                    backgroundImage: `url('${getFeaturedGalleryImages(destination)[1]}')`,
+                                                }"
+                                            ></div>
+
+                                            <div
+                                                v-if="
+                                                    getFeaturedGalleryImages(
+                                                        destination,
+                                                    )[2]
+                                                "
+                                                class="side-photo side-photo-bottom has-image"
+                                                :style="{
+                                                    backgroundImage: `url('${getFeaturedGalleryImages(destination)[2]}')`,
+                                                }"
+                                            ></div>
+
+                                            <div
+                                                v-if="
+                                                    getExtraGalleryImages(
+                                                        destination,
+                                                    ).length
+                                                "
+                                                class="gallery-extra"
+                                            >
+                                                <div
+                                                    v-for="(
+                                                        image, index
+                                                    ) in getExtraGalleryImages(
+                                                        destination,
+                                                    )"
+                                                    :key="`${destination.id}-gallery-${index}`"
+                                                    class="gallery-thumb has-image"
+                                                    :style="{
+                                                        backgroundImage: `url('${image}')`,
+                                                    }"
+                                                    :title="`${destination.name} gallery photo ${index + 4}`"
+                                                ></div>
+                                            </div>
+                                        </div>
+
+                                        <div class="destination-side">
+                                            <article class="spot-card">
+                                                <div class="spot-card-head">
+                                                    <div>
+                                                        <h3>
+                                                            {{
+                                                                destination.name
+                                                            }}
+                                                        </h3>
+                                                        <p>
+                                                            {{
+                                                                destination.category_label
+                                                            }}
+                                                        </p>
+                                                    </div>
+                                                    <div class="spot-card-icons">
+                                                        <button type="button">
+                                                            ♡
+                                                        </button>
+                                                        <button type="button">
+                                                            ↗
+                                                        </button>
+                                                    </div>
+                                                </div>
+
+                                                <p
+                                                    v-if="
+                                                        destination.average_rating
+                                                    "
+                                                    class="spot-rating"
+                                                >
+                                                    <span
+                                                        >★
+                                                        {{
+                                                            destination.average_rating.toFixed(
+                                                                1,
+                                                            )
+                                                        }}</span
+                                                    >
+                                                    ({{
+                                                        destination.ratings_count
+                                                    }}
+                                                    reviews)
+                                                </p>
+                                                <p
+                                                    v-else
+                                                    class="spot-rating spot-rating-empty"
+                                                >
+                                                    No ratings yet
+                                                </p>
+
+                                                <p class="spot-description">
+                                                    {{ destination.description }}
+                                                </p>
+
+                                                <div class="spot-actions">
+                                                    <button
+                                                        type="button"
+                                                        class="solid-btn"
+                                                    >
+                                                        Get Directions
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="ghost-pill"
+                                                    >
+                                                        Save
+                                                    </button>
+                                                </div>
+                                            </article>
+
+                                            <article class="info-card">
+                                                <div class="info-tabs">
+                                                    <button
+                                                        type="button"
+                                                        class="active"
+                                                    >
+                                                        Information
+                                                    </button>
+                                                </div>
+
+                                                <ul>
+                                                    <li>
+                                                        <strong>Category</strong>
+                                                        <span>{{
+                                                            destination.category_label
+                                                        }}</span>
+                                                    </li>
+                                                    <li>
+                                                        <strong
+                                                            >Municipality</strong
+                                                        >
+                                                        <span
+                                                            >Baao, Camarines
+                                                            Sur</span
+                                                        >
+                                                    </li>
+                                                    <li>
+                                                        <strong
+                                                            >Coordinates</strong
+                                                        >
+                                                        <span>{{
+                                                            formatCoordinates(
+                                                                destination.latitude,
+                                                                destination.longitude,
+                                                            )
+                                                        }}</span>
+                                                    </li>
+                                                </ul>
+                                            </article>
                                         </div>
                                     </div>
-
-                                    <div class="destination-side">
-                                        <article class="spot-card">
-                                            <div class="spot-card-head">
-                                                <div>
-                                                    <h3>{{ destination.name }}</h3>
-                                                    <p>{{ destination.category_label }}</p>
-                                                </div>
-                                                <div class="spot-card-icons">
-                                                    <button type="button">♡</button>
-                                                    <button type="button">↗</button>
-                                                </div>
-                                            </div>
-
-                                            <p
-                                                v-if="destination.average_rating"
-                                                class="spot-rating"
-                                            >
-                                                <span
-                                                    >★
-                                                    {{
-                                                        destination.average_rating.toFixed(
-                                                            1,
-                                                        )
-                                                    }}</span
-                                                >
-                                                ({{ destination.ratings_count }}
-                                                reviews)
-                                            </p>
-                                            <p
-                                                v-else
-                                                class="spot-rating spot-rating-empty"
-                                            >
-                                                No ratings yet
-                                            </p>
-
-                                            <p class="spot-description">
-                                                {{ destination.description }}
-                                            </p>
-
-                                            <div class="spot-actions">
-                                                <button type="button" class="solid-btn">
-                                                    Get Directions
-                                                </button>
-                                                <button type="button" class="ghost-pill">
-                                                    Save
-                                                </button>
-                                            </div>
-                                        </article>
-
-                                        <article class="info-card">
-                                            <div class="info-tabs">
-                                                <button type="button" class="active">
-                                                    Information
-                                                </button>
-                                            </div>
-
-                                            <ul>
-                                                <li>
-                                                    <strong>Category</strong>
-                                                    <span>{{
-                                                        destination.category_label
-                                                    }}</span>
-                                                </li>
-                                                <li>
-                                                    <strong>Municipality</strong>
-                                                    <span>Baao, Camarines Sur</span>
-                                                </li>
-                                                <li>
-                                                    <strong>Coordinates</strong>
-                                                    <span>{{
-                                                        formatCoordinates(
-                                                            destination.latitude,
-                                                            destination.longitude,
-                                                        )
-                                                    }}</span>
-                                                </li>
-                                            </ul>
-                                        </article>
-                                    </div>
-                                </div>
-                            </article>
-                        </div>
+                                </article>
+                            </div>
                         </div>
 
                         <button
@@ -1137,6 +1139,56 @@ onBeforeUnmount(() => {
                 </p>
             </section>
 
+            <section class="app-section">
+                <div class="mobile-app-feature">
+                    <div class="mobile-app-intro">
+                        <p class="section-pill section-pill-blue">Mobile App</p>
+                        <h3>Introducing the i-Baao App</h3>
+                        <p>
+                            Take Baao tourism with you wherever you go. The
+                            official mobile app brings the interactive map,
+                            destinations, and local highlights right to your
+                            fingertips.
+                        </p>
+                        <a
+                            v-if="appDownloadUrl"
+                            :href="appDownloadUrl"
+                            class="solid-btn mobile-app-download-btn"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            Download Android App
+                        </a>
+                    </div>
+
+                    <ul class="mobile-app-feature-list">
+                        <li
+                            v-for="feature in mobileAppFeatures"
+                            :key="feature.title"
+                        >
+                            <span class="mobile-app-feature-icon">{{
+                                feature.icon
+                            }}</span>
+                            <div>
+                                <strong>{{ feature.title }}</strong>
+                                <p>{{ feature.description }}</p>
+                            </div>
+                        </li>
+                    </ul>
+
+                    <div class="mobile-app-preview">
+                        <img
+                            class="mobile-app-preview-logo"
+                            :src="appLogo"
+                            alt="i-Baao app logo"
+                        />
+                        <strong>i-Baao</strong>
+                        <small>Official Tourism App</small>
+                        <span class="mobile-app-version">Version 2</span>
+                    </div>
+                </div>
+            </section>
+
             <section class="section-shell reviews-section">
                 <p class="section-pill section-pill-gold">
                     Ratings &amp; Reviews
@@ -1147,9 +1199,14 @@ onBeforeUnmount(() => {
                     Baao
                 </p>
 
-                <div v-if="reviewSummary.total_reviews > 0" class="reviews-layout">
+                <div
+                    v-if="reviewSummary.total_reviews > 0"
+                    class="reviews-layout"
+                >
                     <aside class="rating-panel">
-                        <h3>{{ reviewSummary.average_rating?.toFixed(1) ?? "—" }}</h3>
+                        <h3>
+                            {{ reviewSummary.average_rating?.toFixed(1) ?? "—" }}
+                        </h3>
                         <p class="stars">★★★★★</p>
                         <small
                             >Based on
@@ -1285,8 +1342,8 @@ onBeforeUnmount(() => {
                             alt="i-Baao logo"
                         />
                         <span class="brand-copy">
-                            <strong>Tourism Mapping System</strong>
-                            <small>Municipality of Baao</small>
+                            <strong>Explore Baao</strong>
+                            <small>Tourism Mapping System</small>
                         </span>
                     </a>
                     <p>
@@ -1315,7 +1372,6 @@ onBeforeUnmount(() => {
                     <h4>Navigation</h4>
                     <ul>
                         <li><a href="/">Home</a></li>
-                        <li><a href="#map">Map</a></li>
                         <li><a href="#destinations">Destinations</a></li>
                         <li><a href="#events">Events</a></li>
                         <li><a href="#about">About</a></li>
@@ -1346,18 +1402,28 @@ onBeforeUnmount(() => {
 @import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap");
 
 .tourism-page {
-    --bg-base: #f8fafc;
+    --bg-base: #ffffff;
     --bg-surface: #ffffff;
+    --bg-soft: #ffffff;
     --bg-glass: rgba(255, 255, 255, 0.85);
-    --border-glass: #e2e8f0;
-    --text-main: #0f172a;
-    --text-muted: #64748b;
-    --accent-primary: #10b981;
-    --accent-glow: rgba(16, 185, 129, 0.25);
+    --border-glass: #dbe7e3;
+    --text-main: #0c2926;
+    --text-muted: #5e7873;
+    --accent-primary: #0f766e;
+    --accent-strong: #0b5e57;
+    --accent-soft: #14b8a6;
+    --accent-glow: rgba(15, 118, 110, 0.18);
     --accent-sec: #0284c7;
-    --gradient-hero: linear-gradient(135deg, #059669 0%, #10b981 100%);
+    --accent-warm: #f97316;
+    --accent-gold: #f59e0b;
+    --gradient-hero: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%);
+    --shadow-sm: 0 4px 14px rgba(12, 41, 38, 0.06);
+    --shadow-md: 0 14px 40px rgba(12, 41, 38, 0.1);
+    --shadow-lg: 0 26px 60px rgba(12, 41, 38, 0.16);
+    --radius-lg: 22px;
+    --radius-md: 16px;
 
-    background-color: var(--bg-base);
+    background-color: #ffffff;
     color: var(--text-main);
     font-family: "Plus Jakarta Sans", sans-serif;
     min-height: 100vh;
@@ -1367,7 +1433,7 @@ onBeforeUnmount(() => {
 @keyframes fadeUp {
     from {
         opacity: 0;
-        transform: translateY(15px);
+        transform: translateY(18px);
     }
     to {
         opacity: 1;
@@ -1375,6 +1441,26 @@ onBeforeUnmount(() => {
     }
 }
 
+@keyframes scrollBob {
+    0%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.4;
+    }
+    50% {
+        transform: translateY(8px);
+        opacity: 1;
+    }
+}
+
+h1,
+h2,
+h3,
+h4 {
+    font-family: "Outfit", sans-serif;
+}
+
+/* ============ TOP NAV ============ */
 .top-nav-shell {
     position: fixed;
     top: 0;
@@ -1382,56 +1468,62 @@ onBeforeUnmount(() => {
     right: 0;
     width: 100%;
     z-index: 1000;
-    background: transparent;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    border-bottom: 1px solid transparent;
+    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-soft) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 4px 20px rgba(12, 41, 38, 0.12);
     transition: all 0.35s ease;
 }
 .top-nav-shell.nav-scrolled {
-    background: var(--bg-glass);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--border-glass);
-    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.06);
-}
-
-.top-nav-shell.mobile-menu-open {
-    background: #ffffff;
+    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-soft) 100%);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    border-bottom: 1px solid var(--border-glass);
-    box-shadow: 0 2px 20px rgba(0, 0, 0, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 6px 26px rgba(12, 41, 38, 0.18);
 }
-
+.top-nav-shell.mobile-menu-open {
+    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-soft) 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 6px 26px rgba(12, 41, 38, 0.18);
+}
 .top-nav-shell.mobile-menu-open .brand {
-    color: var(--text-main);
+    color: #ffffff;
 }
 .top-nav-shell.mobile-menu-open .hamburger-btn span {
-    background: var(--text-main);
+    background: #ffffff;
 }
 
-/* Transparent nav: white text */
-.top-nav-shell:not(.nav-scrolled) .nav-link {
-    color: rgba(255, 255, 255, 0.8);
+/* Green gradient top bar: white text */
+.top-nav-shell .nav-link {
+    color: rgba(255, 255, 255, 0.85);
 }
-.top-nav-shell:not(.nav-scrolled) .nav-link:hover {
+.top-nav-shell .nav-link:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.15);
+}
+.top-nav-shell .brand {
     color: #ffffff;
 }
-.top-nav-shell:not(.nav-scrolled) .brand {
+.top-nav-shell .brand-copy small {
+    color: rgba(255, 255, 255, 0.75);
+}
+.top-nav-shell .ghost-btn {
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.4);
+}
+.top-nav-shell .ghost-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: #ffffff;
     color: #ffffff;
 }
-.top-nav-shell:not(.nav-scrolled) .brand-copy small {
-    color: rgba(255, 255, 255, 0.7);
+.top-nav-shell .downloads-trigger {
+    color: var(--accent-primary);
+    background: #ffffff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
-.top-nav-shell:not(.nav-scrolled) .ghost-btn,
-.top-nav-shell:not(.nav-scrolled) .downloads-trigger {
-    color: #ffffff;
+.top-nav-shell .downloads-chevron {
+    border-top-color: currentColor;
 }
-.top-nav-shell:not(.nav-scrolled) .downloads-chevron {
-    border-top-color: rgba(255, 255, 255, 0.85);
-}
-.top-nav-shell:not(.nav-scrolled):not(.mobile-menu-open) .hamburger-btn span {
+.top-nav-shell .hamburger-btn span {
     background: #ffffff;
 }
 
@@ -1441,7 +1533,7 @@ onBeforeUnmount(() => {
     align-items: center;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0.65rem 1rem;
+    padding: 0.7rem 1.25rem;
 }
 
 .brand {
@@ -1451,7 +1543,6 @@ onBeforeUnmount(() => {
     text-decoration: none;
     color: var(--text-main);
 }
-
 .brand-icon {
     display: block;
     width: 2.75rem;
@@ -1460,164 +1551,153 @@ onBeforeUnmount(() => {
     object-fit: cover;
     object-position: center top;
     flex-shrink: 0;
+    border: 2px solid rgba(255, 255, 255, 0.55);
+    box-shadow: 0 4px 12px rgba(12, 41, 38, 0.18);
 }
-
 .brand-copy {
     display: flex;
     flex-direction: column;
+    line-height: 1.1;
 }
-
 .brand-copy strong {
-    display: block;
     font-family: "Outfit", sans-serif;
     font-size: 1.05rem;
     font-weight: 800;
     letter-spacing: -0.01em;
 }
-
 .brand-copy small {
-    color: var(--accent-primary);
-    font-weight: 700;
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-weight: 600;
 }
 
 .nav-links {
     display: flex;
-    gap: 2rem;
+    align-items: center;
+    gap: 0.35rem;
 }
-
 .nav-link {
-    color: var(--text-muted);
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 0.85rem;
-    transition: color 0.2s ease;
     position: relative;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 999px;
+    transition: color 0.2s ease, background 0.2s ease;
 }
-
-.nav-link:hover {
-    color: var(--text-main);
-}
-.nav-link::after {
-    content: "";
-    position: absolute;
-    bottom: -4px;
-    left: 0;
-    width: 0;
-    height: 2px;
-    background: var(--accent-primary);
-    transition: width 0.3s ease;
-}
-.nav-link:hover::after {
-    width: 100%;
+.nav-scrolled .nav-link:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.15);
 }
 
 .auth-actions {
     display: flex;
-    gap: 1rem;
     align-items: center;
+    gap: 0.75rem;
+}
+
+.ghost-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.5rem 1.1rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-glass);
+    background: transparent;
+    color: var(--text-main);
+    font-weight: 700;
+    font-size: 0.88rem;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.ghost-btn:hover {
+    background: var(--accent-glow);
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
 }
 
 .downloads-dropdown {
     position: relative;
 }
-
 .downloads-trigger {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    background: none;
+    gap: 0.45rem;
+    padding: 0.5rem 1.1rem;
+    border-radius: 999px;
     border: none;
-    color: var(--text-muted);
-    font-weight: 600;
-    font-size: 0.85rem;
+    background: #ffffff;
+    color: var(--accent-primary);
+    font-weight: 700;
+    font-size: 0.88rem;
     cursor: pointer;
-    transition: color 0.2s ease;
-    padding: 0;
-    font-family: inherit;
+    box-shadow: 0 4px 12px rgba(12, 41, 38, 0.1);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
-
 .downloads-trigger:hover {
-    color: var(--text-main);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(12, 41, 38, 0.15);
 }
-
 .downloads-chevron {
-    display: inline-block;
     width: 0;
     height: 0;
     border-left: 4px solid transparent;
     border-right: 4px solid transparent;
-    border-top: 5px solid var(--text-muted);
-    transition: transform 0.2s ease, border-top-color 0.2s ease;
+    border-top: 5px solid currentColor;
+    transition: transform 0.2s ease;
 }
-
 .downloads-chevron.open {
     transform: rotate(180deg);
 }
-
 .downloads-menu {
     position: absolute;
-    top: calc(100% + 0.75rem);
+    top: calc(100% + 0.6rem);
     right: 0;
-    min-width: 15rem;
-    padding: 0.5rem;
-    background: var(--bg-glass);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    min-width: 16rem;
+    background: #ffffff;
     border: 1px solid var(--border-glass);
-    border-radius: 14px;
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.15);
-    z-index: 120;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    padding: 0.5rem;
+    z-index: 50;
 }
-
 .downloads-item {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.75rem;
-    border-radius: 10px;
+    padding: 0.65rem 0.7rem;
+    border-radius: 12px;
     text-decoration: none;
     color: var(--text-main);
     transition: background 0.2s ease;
 }
-
 .downloads-item:hover {
-    background: rgba(16, 185, 129, 0.08);
+    background: var(--bg-soft);
 }
-
 .downloads-item-icon {
-    width: 2.25rem;
-    height: 2.25rem;
-    border-radius: 50%;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 10px;
     object-fit: cover;
-    object-position: center top;
-    flex-shrink: 0;
 }
-
 .downloads-item-copy {
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
 }
-
 .downloads-item-copy strong {
-    font-size: 0.85rem;
+    font-size: 0.9rem;
     font-weight: 700;
 }
-
 .downloads-item-copy small {
+    font-size: 0.76rem;
     color: var(--text-muted);
-    font-size: 0.72rem;
-    font-weight: 600;
 }
 
 .dropdown-enter-active,
 .dropdown-leave-active {
     transition: opacity 0.2s ease, transform 0.2s ease;
 }
-
 .dropdown-enter-from,
 .dropdown-leave-to {
     opacity: 0;
@@ -1629,20 +1709,20 @@ onBeforeUnmount(() => {
     flex-direction: column;
     justify-content: center;
     gap: 5px;
-    background: none;
+    width: 2.6rem;
+    height: 2.6rem;
     border: none;
+    background: transparent;
     cursor: pointer;
-    padding: 0.5rem;
-    z-index: 110;
+    padding: 0;
 }
 .hamburger-btn span {
     display: block;
-    width: 22px;
+    width: 24px;
     height: 2px;
-    background: var(--text-main);
     border-radius: 2px;
+    background: var(--text-main);
     transition: all 0.3s ease;
-    transform-origin: center;
 }
 .hamburger-btn span.open:nth-child(1) {
     transform: translateY(7px) rotate(45deg);
@@ -1654,312 +1734,664 @@ onBeforeUnmount(() => {
     transform: translateY(-7px) rotate(-45deg);
 }
 
-.mobile-nav {
-    display: none;
-}
-
-.ghost-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-main);
-    font-weight: 700;
-    cursor: pointer;
-    text-decoration: none;
-    transition: color 0.2s;
-}
-.ghost-btn:hover {
-    color: var(--accent-primary);
-}
-
-.solid-btn {
-    background: var(--gradient-hero);
-    border: none;
-    padding: 0.55rem 1.25rem;
-    border-radius: 99px;
-    color: white;
-    font-size: 0.85rem;
-    font-weight: 700;
-    cursor: pointer;
-    box-shadow: 0 4px 15px var(--accent-glow);
-    transition:
-        transform 0.2s,
-        box-shadow 0.2s;
-}
-.solid-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px var(--accent-glow);
-}
-
-/* HERO SECTION CSS */
+/* ============ HERO ============ */
 .hero-section {
     position: relative;
-    padding: 9rem 2rem 7rem;
+    min-height: auto;
+    background-color: #ffffff;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66zm0-2l26-15V17L28 3L2 17v32l26 15zM28 98L0 82L0 66L28 50L56 66L56 82L28 98zm0-2l26-15V67L28 53L2 67v13l26 15z' fill='%230f766e' fill-opacity='0.035' fill-rule='evenodd'/%3E%3C/svg%3E");
     display: flex;
-    align-items: center;
-    justify-content: flex-start;
+    flex-direction: column;
+    justify-content: center;
+    padding: 7rem 0 0;
     overflow: hidden;
-    background-size: cover;
-    background-position: center;
-    height: 90vh;
-    min-height: 600px;
-    transition: background-image 0.5s ease-in-out;
+    border-bottom: 1px solid var(--border-glass);
 }
-.hero-section::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 1;
-}
-.hero-section .hero-grid {
-    opacity: 0.1;
-}
-
-.hero-pill {
-    display: inline-block;
-    padding: 0.5rem 1.25rem;
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--accent-primary);
-    border-radius: 99px;
-    border: 1px solid rgba(16, 185, 129, 0.2);
-    font-weight: 700;
-    font-size: 0.75rem;
-    margin-bottom: 1.5rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.hero-content {
+.hero-inner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: flex-end;
+    gap: 0;
+    max-width: 1200px;
     width: 100%;
-    max-width: 520px;
-    margin-right: auto;
-    text-align: left;
-    color: white;
-    z-index: 10;
+    margin: 0 auto;
+    padding: 0 2.5rem;
+}
+.hero-content {
     position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+    padding-bottom: 4rem;
+    animation: fadeUp 0.7s ease both;
+}
+.hero-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 1rem;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-glass);
+    color: var(--accent-primary);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+.hero-pill-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-soft);
 }
 .hero-content h1 {
-    color: white;
-    font-size: clamp(2.8rem, 5vw, 4rem);
-    line-height: 1.1;
-    margin-bottom: 1.2rem;
-    font-family: "Outfit", sans-serif;
+    margin: 1rem 0 0;
+    color: var(--text-main);
+    font-size: clamp(3rem, 5.5vw, 4.8rem);
     font-weight: 800;
-    letter-spacing: -0.02em;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
 }
 .hero-content h1 span {
-    background: linear-gradient(135deg, #34d399 0%, #10b981 50%, #06b6d4 100%);
+    display: block;
+    background: linear-gradient(120deg, var(--accent-primary) 0%, var(--accent-soft) 100%);
     -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
     background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 .hero-subtitle {
-    font-size: 1rem;
-    margin-left: 0;
-    color: #e2e8f0;
-    margin-bottom: 2.5rem;
-    line-height: 1.6;
+    margin: 1rem 0 0;
+    max-width: 28rem;
+    color: var(--text-muted);
+    font-size: clamp(0.97rem, 1.2vw, 1.08rem);
+    line-height: 1.65;
 }
 
 .search-shell {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-glass);
-    border-radius: 99px;
-    padding: 0.3rem;
     display: flex;
     align-items: center;
-    max-width: 600px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.05);
-    margin-left: 0;
+    gap: 0.5rem;
+    margin-top: 2rem;
+    width: 100%;
+    max-width: 30rem;
+    background: #ffffff;
+    border: 1px solid var(--border-glass);
+    border-radius: 999px;
+    padding: 0.45rem 0.45rem 0.45rem 1.15rem;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-
+.search-shell:focus-within {
+    border-color: var(--accent-primary);
+    box-shadow: none;
+}
 .search-icon {
-    font-size: 1.5rem;
-    padding: 0 1rem;
-    color: var(--text-muted);
+    font-size: 1.3rem;
+    color: var(--accent-primary);
 }
-
 .search-shell input {
     flex: 1;
-    background: transparent;
     border: none;
-    color: var(--text-main);
-    font-size: 0.9rem;
     outline: none;
+    background: transparent;
+    font-size: 1rem;
+    font-family: inherit;
+    color: var(--text-main);
+    min-width: 0;
 }
-.search-shell input::placeholder {
-    color: #94a3b8;
-}
-
 .search-shell button {
-    background: var(--text-main);
-    color: white;
     border: none;
-    padding: 0.5rem 1.75rem;
-    border-radius: 99px;
-    font-weight: 700;
     cursor: pointer;
-    transition: background 0.2s;
+    padding: 0.7rem 1.6rem;
+    border-radius: 999px;
+    background: linear-gradient(
+        135deg,
+        var(--accent-primary),
+        var(--accent-soft)
+    );
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 0.92rem;
+    transition: transform 0.2s ease;
 }
 .search-shell button:hover {
-    background: var(--accent-primary);
+    transform: translateY(-1px);
 }
-
 .search-result {
-    margin-top: 1rem;
-    color: #e2e8f0;
-    font-size: 0.9rem;
+    margin-top: 0.85rem;
+    color: var(--text-muted);
+    font-size: 0.88rem;
     font-weight: 600;
 }
 
-.hero-spots-carousel {
-    position: absolute;
-    bottom: 3rem;
-    right: 0;
+.hero-stats {
     display: flex;
-    gap: 1.25rem;
-    width: 100%;
-    max-width: 55%;
-    overflow-x: auto;
-    padding: 2rem 2rem 1rem;
+    flex-wrap: wrap;
+    gap: 2.5rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+}
+.hero-stat dt {
+    font-family: "Outfit", sans-serif;
+    font-size: clamp(1.6rem, 2.5vw, 2.1rem);
+    font-weight: 800;
+    color: var(--accent-primary);
+    line-height: 1;
+}
+.hero-stat dd {
+    margin: 0.35rem 0 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* Hero visual (right column) */
+.hero-visual {
+    display: flex;
+    justify-content: center;
     align-items: flex-end;
-    z-index: 20;
+    animation: fadeUp 0.85s 0.15s ease both;
 }
-
-.hero-spots-carousel::-webkit-scrollbar {
-    height: 6px;
-}
-.hero-spots-carousel::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.3);
-    border-radius: 99px;
-}
-
-/* Carousel queue transition */
-.carousel-queue-move {
-    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.carousel-queue-enter-active {
-    transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-}
-.carousel-queue-leave-active {
-    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    position: absolute;
-}
-.carousel-queue-enter-from {
-    opacity: 0;
-    transform: translateX(80px) scale(0.9);
-}
-.carousel-queue-leave-to {
-    opacity: 0;
-    transform: translateY(-20px) scale(0.85);
-}
-
-.spot-card-mini {
-    flex: 0 0 auto;
-    width: 170px;
-    height: 240px;
-    border-radius: 14px;
-    overflow: hidden;
-    position: relative;
-    cursor: pointer;
-    box-shadow: none;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 2px solid rgba(255, 255, 255, 0.1);
-    background: #0f172a;
-}
-.spot-card-mini:hover {
-    transform: translateY(-8px);
-}
-.spot-card-mini-active {
-    border-color: var(--accent-primary);
-    transform: translateY(-10px);
-    box-shadow: none;
-}
-.spot-card-mini img {
+.hero-traveler-img {
+    width: 100%;
+    max-width: 100%;
+    height: clamp(620px, 72vh, 780px);
     display: block;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    object-position: center;
+    object-fit: contain;
+    object-position: bottom center;
+    filter: contrast(1.07) brightness(1.02) saturate(1.15);
 }
-.spot-card-mini-info {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    background: linear-gradient(
-        to top,
-        rgba(0, 0, 0, 0.85) 0%,
-        transparent 100%
-    );
-    padding: 2.5rem 1rem 1rem;
-    color: white;
-    text-align: left;
+
+/* ============ MOBILE NAV ============ */
+.mobile-nav {
     display: flex;
     flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.75rem 1.25rem 1.25rem;
+    background: #ffffff;
+    border-top: 1px solid var(--border-glass);
 }
-.spot-card-mini-info small {
-    font-size: 0.65rem;
-    color: #38bdf8;
+.mobile-nav-link {
+    padding: 0.85rem 0.5rem;
+    font-weight: 700;
+    color: var(--text-main);
+    text-decoration: none;
+    border-bottom: 1px solid var(--bg-soft);
+}
+.mobile-section-label {
+    margin: 1rem 0 0.5rem;
+    font-size: 0.72rem;
     font-weight: 800;
     text-transform: uppercase;
-    margin-bottom: 0.3rem;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
 }
-.spot-card-mini-info strong {
-    font-size: 0.85rem;
+.mobile-download-card {
+    margin-top: 0.5rem;
+}
+.mobile-download-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border-radius: var(--radius-md);
+    background: var(--bg-soft);
+    text-decoration: none;
+    color: var(--text-main);
+}
+.mobile-download-icon {
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 12px;
+    object-fit: cover;
+}
+.mobile-download-copy {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+.mobile-download-copy strong {
+    font-size: 0.92rem;
     font-weight: 800;
-    line-height: 1.2;
-    font-family: "Outfit";
+}
+.mobile-download-copy small {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+}
+.mobile-download-arrow {
+    font-size: 1.2rem;
+    color: var(--accent-primary);
+    font-weight: 800;
+}
+.mobile-auth {
+    margin-top: 1rem;
+}
+.mobile-login-btn {
+    display: block;
+    text-align: center;
+    padding: 0.85rem;
+    border-radius: 999px;
+    background: linear-gradient(
+        135deg,
+        var(--accent-primary),
+        var(--accent-soft)
+    );
+    color: #ffffff;
+    font-weight: 800;
+    text-decoration: none;
 }
 
-@media (max-width: 1200px) and (min-width: 769px) {
-    .hero-spots-carousel {
-        max-width: 100%;
-        right: 1rem;
-        left: 1rem;
-        padding-bottom: 1rem;
-    }
-    .hero-content {
-        margin-bottom: 15rem;
-    }
+.mobile-menu-enter-active {
+    transition: all 0.3s ease;
+}
+.mobile-menu-leave-active {
+    transition: all 0.25s ease;
+}
+.mobile-menu-enter-from,
+.mobile-menu-leave-to {
+    opacity: 0;
+    transform: translateY(-10px);
 }
 
-/* MAIN CONTENT AND LAYOUT CSS */
-
+/* ============ SECTIONS / SHARED ============ */
 .main-content {
-    --section-x: clamp(1.25rem, 4vw, 3rem);
-    width: 100%;
-    max-width: none;
-    margin: 0;
+    --section-x: 1.25rem;
+    position: relative;
+    z-index: 3;
+    background: #ffffff;
+}
+.section-shell {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 4.5rem var(--section-x);
+}
+.section-shell > h2 {
+    margin: 0.65rem 0 0;
+    font-size: clamp(1.8rem, 3.4vw, 2.5rem);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+.section-subtitle {
+    margin: 0.6rem 0 0;
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1.5;
+    max-width: 40rem;
+}
+.section-head-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+}
+.section-empty {
+    margin-top: 2rem;
+    padding: 2.5rem;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--bg-surface);
+    border: 1px dashed var(--border-glass);
+    border-radius: var(--radius-lg);
+    font-weight: 600;
+}
+
+.section-pill {
+    display: inline-block;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: var(--accent-glow);
+    color: var(--accent-primary);
+}
+.section-pill-peach {
+    background: rgba(249, 115, 22, 0.12);
+    color: #ea580c;
+}
+.section-pill-mint {
+    background: rgba(16, 185, 129, 0.14);
+    color: #059669;
+}
+.section-pill-blue {
+    background: rgba(2, 132, 199, 0.12);
+    color: #0284c7;
+}
+.section-pill-gold {
+    background: rgba(245, 158, 11, 0.16);
+    color: #d97706;
+}
+
+.solid-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.8rem 1.4rem;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(
+        135deg,
+        var(--accent-primary),
+        var(--accent-soft)
+    );
+    color: #ffffff;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    text-decoration: none;
+    box-shadow: 0 10px 24px var(--accent-glow);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.solid-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+.ghost-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.7rem 1.3rem;
+    border-radius: 999px;
+    border: 1px solid var(--border-glass);
+    background: var(--bg-surface);
+    color: var(--text-main);
+    font-weight: 700;
+    font-size: 0.88rem;
+    cursor: pointer;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+.ghost-pill:hover {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+.outline-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+}
+
+/* ============ WHY VISIT ============ */
+.why-visit-section {
+    background: #ffffff;
     padding: 0;
+}
+.why-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    margin-top: 3rem;
+    border-top: 1px solid var(--border-glass);
+}
+.why-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.1rem;
+    padding: 1.75rem 1.5rem 1.75rem 0;
+    border-bottom: 1px solid var(--border-glass);
+}
+.why-item:nth-child(odd) {
+    border-right: 1px solid var(--border-glass);
+    padding-right: 2rem;
+}
+.why-item:nth-child(even) {
+    padding-left: 2rem;
+}
+.why-icon-wrap {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-glass);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-primary);
+    margin-top: 2px;
+}
+.why-text h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 0.35rem;
+    line-height: 1.3;
+}
+.why-text p {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    line-height: 1.65;
+}
+
+/* ============ EXPLORE BY CATEGORY ============ */
+.category-explore-section {
+    background: #ffffff;
+}
+.cat-explore-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 1rem;
+    margin-top: 2rem;
+}
+.cat-explore-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 1.5rem 1rem;
+    border: 1.5px solid var(--border-glass);
+    border-radius: var(--radius-md);
+    background: #ffffff;
+    cursor: pointer;
+    transition: all 0.22s ease;
+    text-align: center;
+}
+.cat-explore-card:hover {
+    border-color: var(--accent-primary);
+    background: var(--bg-soft);
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-sm);
+}
+.cat-explore-icon {
+    font-size: 2rem;
+    line-height: 1;
+}
+.cat-explore-label {
+    font-size: 0.88rem;
+    font-weight: 800;
+    color: var(--text-main);
+}
+.cat-explore-count {
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+    background: var(--accent-glow);
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+}
+
+/* ============ TRAVEL TIPS ============ */
+.travel-tips-section {
+    background: #ffffff;
+}
+.tips-list {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 0 3rem;
+    margin-top: 3rem;
+}
+.tips-col {
     display: flex;
     flex-direction: column;
     gap: 0;
 }
-
-.section-shell {
-    width: 100%;
-    box-sizing: border-box;
-    padding: clamp(3.5rem, 6vw, 5.5rem) var(--section-x);
-    text-align: center;
-    scroll-margin-top: 5.7rem;
+.tips-divider {
+    width: 1px;
+    background: var(--border-glass);
+    align-self: stretch;
 }
-
-.map-section {
-    background: var(--bg-base);
-}
-
-.destination-section {
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border-glass);
+.tip-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.4rem 0;
     border-bottom: 1px solid var(--border-glass);
 }
-
-.destination-swipe-shell {
-    margin-top: 2rem;
-    text-align: left;
+.tip-item:first-child {
+    padding-top: 0;
+}
+.tip-item:last-child {
+    border-bottom: none;
+}
+.tip-icon-wrap {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: var(--bg-soft);
+    border: 1px solid var(--border-glass);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent-primary);
+    margin-top: 2px;
+}
+.tip-item h4 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 0.3rem;
+    line-height: 1.3;
+}
+.tip-item p {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    line-height: 1.6;
 }
 
+/* ============ MOBILE APP ============ */
+.app-section {
+    background: linear-gradient(135deg, #042f2e 0%, #0f766e 100%);
+    color: #ffffff;
+    padding: 5rem 1.25rem;
+    width: 100%;
+    box-shadow: inset 0 20px 40px rgba(0,0,0,0.08), inset 0 -20px 40px rgba(0,0,0,0.08);
+}
+.mobile-app-feature {
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1.1fr 1fr auto;
+    gap: 2rem;
+    align-items: center;
+}
+.mobile-app-intro h3 {
+    margin: 0.85rem 0 0.75rem;
+    font-size: 1.8rem;
+    font-weight: 800;
+}
+.mobile-app-intro p {
+    color: rgba(255, 255, 255, 0.82);
+    line-height: 1.6;
+}
+.mobile-app-intro .section-pill-blue {
+    background: rgba(255, 255, 255, 0.16);
+    color: #ffffff;
+}
+.mobile-app-download-btn {
+    margin-top: 1.5rem;
+    background: #ffffff;
+    color: var(--accent-primary);
+}
+.mobile-app-download-btn:hover {
+    background: #fbbf24;
+    color: #042f2e;
+}
+.mobile-app-feature-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+}
+.mobile-app-feature-list li {
+    display: flex;
+    gap: 0.9rem;
+    align-items: flex-start;
+}
+.mobile-app-feature-icon {
+    flex-shrink: 0;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.14);
+    font-size: 1.2rem;
+}
+.mobile-app-feature-list strong {
+    font-size: 0.98rem;
+    font-weight: 800;
+}
+.mobile-app-feature-list p {
+    margin: 0.2rem 0 0;
+    font-size: 0.84rem;
+    color: rgba(255, 255, 255, 0.74);
+    line-height: 1.45;
+}
+.mobile-app-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 2rem 2.5rem;
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+.mobile-app-preview-logo {
+    width: 5rem;
+    height: 5rem;
+    border-radius: 22px;
+    object-fit: cover;
+    margin-bottom: 0.5rem;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+}
+.mobile-app-preview strong {
+    font-size: 1.2rem;
+    font-weight: 800;
+}
+.mobile-app-preview small {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.74);
+}
+.mobile-app-version {
+    margin-top: 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+    font-size: 0.74rem;
+    font-weight: 800;
+}
+
+/* ============ DESTINATION SWIPE ============ */
+.destination-swipe-shell {
+    margin-top: 2rem;
+}
 .destination-swipe-meta {
     display: flex;
     align-items: center;
@@ -1967,1486 +2399,678 @@ onBeforeUnmount(() => {
     gap: 1rem;
     margin-bottom: 1rem;
 }
-
 .destination-swipe-count {
-    margin: 0;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: var(--text-main);
+    font-weight: 800;
+    color: var(--accent-primary);
 }
-
 .destination-swipe-hint {
-    margin: 0;
     font-size: 0.82rem;
-    font-weight: 600;
     color: var(--text-muted);
+    font-weight: 600;
 }
-
+.destination-swipe-hint-mobile {
+    display: none;
+}
 .destination-swipe-stage {
     position: relative;
-    margin-left: calc(-1 * var(--section-x));
-    margin-right: calc(-1 * var(--section-x));
-    width: calc(100% + 2 * var(--section-x));
 }
-
-.destination-swipe-arrow {
-    display: none;
-    position: absolute;
-    top: 50%;
-    z-index: 6;
-    width: 3.25rem;
-    height: 4.5rem;
-    border: 1px solid var(--border-glass);
-    background: rgba(255, 255, 255, 0.96);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    color: var(--text-main);
-    font-size: 1.35rem;
-    font-weight: 700;
-    cursor: pointer;
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
-    transition:
-        background 0.2s ease,
-        color 0.2s ease,
-        transform 0.2s ease;
-}
-
-.destination-swipe-arrow:hover {
-    background: var(--text-main);
-    color: white;
-}
-
-.destination-swipe-arrow-prev {
-    left: 0;
-    transform: translateY(-50%);
-    border-radius: 0 999px 999px 0;
-    border-left: none;
-    padding-right: 0.35rem;
-}
-
-.destination-swipe-arrow-next {
-    right: 0;
-    transform: translateY(-50%);
-    border-radius: 999px 0 0 999px;
-    border-right: none;
-    padding-left: 0.35rem;
-}
-
 .destination-swipe-viewport {
     overflow: hidden;
     touch-action: pan-y;
     cursor: grab;
     user-select: none;
 }
-
 .destination-swipe-viewport:active {
     cursor: grabbing;
 }
-
 .destination-swipe-track {
     display: flex;
     width: 100%;
     transition: transform 0.38s cubic-bezier(0.4, 0, 0.2, 1);
     will-change: transform;
 }
-
 .destination-swipe-track.dragging {
     transition: none;
 }
-
 .destination-slide {
     flex: 0 0 100%;
     width: 100%;
     min-width: 100%;
 }
-
+.destination-swipe-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 6;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    border: 1px solid var(--border-glass);
+    background: #ffffff;
+    color: var(--text-main);
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: var(--shadow-md);
+    transition: all 0.2s ease;
+}
+.destination-swipe-arrow:hover {
+    background: var(--accent-primary);
+    color: #ffffff;
+    border-color: transparent;
+}
+.destination-swipe-arrow-prev {
+    left: 0;
+}
+.destination-swipe-arrow-next {
+    right: 0;
+}
 .destination-swipe-dots {
     display: flex;
     justify-content: center;
-    gap: 0.45rem;
-    margin-top: 1.25rem;
-}
-
-.destination-swipe-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 999px;
-    background: #cbd5e1;
-    transition:
-        width 0.25s ease,
-        background 0.25s ease;
-}
-
-.destination-swipe-dot.active {
-    width: 1.35rem;
-    background: var(--accent-primary);
-}
-
-@media (min-width: 769px) {
-    .destination-swipe-arrow {
-        display: grid;
-        place-items: center;
-    }
-
-    .destination-swipe-hint-mobile {
-        display: none;
-    }
-
-    .destination-swipe-viewport {
-        padding: 0 3.75rem;
-        cursor: default;
-        user-select: auto;
-    }
-
-    .destination-swipe-viewport:active {
-        cursor: default;
-    }
-}
-
-.reviews-section {
-    background: var(--bg-base);
-}
-
-.events-section {
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border-glass);
-    padding-bottom: 0;
-}
-.section-pill {
-    display: inline-block;
-    padding: 0.4rem 1.2rem;
-    border-radius: 99px;
-    font-weight: 800;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 1rem;
-}
-.section-pill-peach {
-    background: #fff7ed;
-    color: #ea580c;
-    border: 1px solid #ffedd5;
-}
-.section-pill-mint {
-    background: #ecfdf5;
-    color: #059669;
-    border: 1px solid #d1fae5;
-}
-.section-pill-gold {
-    background: #fef3c7;
-    color: #d97706;
-    border: 1px solid #fef08a;
-}
-.section-pill-blue {
-    background: #f0f9ff;
-    color: #0284c7;
-    border: 1px solid #e0f2fe;
-}
-
-.section-shell h2 {
-    font-family: "Outfit", sans-serif;
-    font-size: clamp(2rem, 3.5vw, 2.8rem);
-    margin: 0 0 1rem 0;
-    color: var(--text-main);
-    font-weight: 800;
-    letter-spacing: -0.02em;
-}
-.section-subtitle {
-    color: var(--text-muted);
-    max-width: 600px;
-    margin: 0 auto;
-    font-size: 0.95rem;
-    line-height: 1.6;
-}
-
-.category-row {
-    display: flex;
-    justify-content: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin: 2rem 0;
-}
-.category-chip {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-glass);
-    color: var(--text-muted);
-    padding: 0.6rem 1.5rem;
-    border-radius: 99px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
-}
-.category-chip:hover {
-    border-color: var(--accent-primary);
-    color: var(--accent-primary);
-}
-.category-chip-active {
-    background: var(--text-main);
-    color: white;
-    border-color: var(--text-main);
-    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15);
-}
-
-.map-layout {
-    display: grid;
-    grid-template-columns: 350px 1fr;
-    gap: 1.5rem;
-    margin-top: 1.5rem;
-    text-align: left;
-}
-
-.spots-sidebar {
-    background: transparent;
-    border: none;
-    border-top: 1px solid var(--border-glass);
-    border-radius: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow: none;
-    max-height: 574px;
-}
-
-.sidebar-head {
-    padding: 1.25rem 0;
-    border-bottom: 1px solid var(--border-glass);
-    background: transparent;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.sidebar-head h3 {
-    margin: 0;
-    font-size: 1.1rem;
-    font-weight: 800;
-    font-family: "Outfit";
-    color: var(--text-main);
-}
-.sidebar-head span {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    font-weight: 600;
-}
-
-.spot-list {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    overflow-y: auto;
-    flex: 1;
-}
-
-.spot-list li {
-    padding: 1.15rem 0;
-    border-bottom: 1px solid var(--border-glass);
-    cursor: pointer;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    transition: color 0.2s;
-}
-
-.spot-list li:hover {
-    background: transparent;
-    color: var(--accent-primary);
-}
-
-.spot-active {
-    background: transparent !important;
-    border-left: none !important;
-    padding-left: 0 !important;
-    color: var(--accent-primary);
-}
-
-.spot-info {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-}
-
-.spot-info strong {
-    color: var(--text-main);
-    font-weight: 700;
-    font-size: 0.95rem;
-}
-.spot-info small {
-    color: var(--text-muted);
-    font-size: 0.8rem;
-    font-weight: 600;
-}
-
-.spot-arrow {
-    color: var(--border-glass);
-    font-weight: 800;
-    transition: color 0.2s;
-}
-.spot-active .spot-arrow {
-    color: var(--accent-primary);
-}
-
-.map-card {
-    position: relative;
-    z-index: 0;
-    isolation: isolate;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    overflow: visible;
-    box-shadow: none;
-}
-.outline-card {
-    margin-top: 0 !important;
-}
-
-.map-card-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0 0 1rem;
-    border-bottom: none;
-    background: transparent;
-}
-.map-card-head h3 {
-    font-size: 1.25rem;
-    font-weight: 800;
-    color: var(--text-main);
-    margin: 0;
-    font-family: "Outfit";
-}
-.map-legend {
-    display: flex;
-    gap: 1.5rem;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-}
-.map-legend li {
-    display: flex;
-    align-items: center;
     gap: 0.5rem;
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    font-weight: 600;
+    margin-top: 1.5rem;
 }
-.map-legend span {
-    width: 12px;
-    height: 12px;
+.destination-swipe-dot {
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.1);
+    background: var(--border-glass);
+    transition: all 0.2s ease;
 }
-.map-canvas-wrap {
-    padding: 0;
-}
-.leaflet-map {
-    position: relative;
-    z-index: 0;
-    height: 500px;
-    border-radius: 16px;
-    width: 100%;
-    border: 1px solid var(--border-glass);
-}
-
-.mobile-app-feature {
-    display: grid;
-    grid-template-columns: 1.1fr 1.4fr 0.8fr;
-    gap: 2rem;
-    align-items: center;
-    margin-top: 2.5rem;
-    padding: 2rem 0 0;
-    text-align: left;
-    background: transparent;
-    border: none;
-    border-top: 1px solid var(--border-glass);
-    border-radius: 0;
-    box-shadow: none;
-}
-
-.mobile-app-intro h3 {
-    margin: 0 0 0.75rem;
-    font-family: "Outfit", sans-serif;
-    font-size: clamp(1.5rem, 2.5vw, 2rem);
-    font-weight: 800;
-    color: var(--text-main);
-    letter-spacing: -0.02em;
-}
-
-.mobile-app-intro p {
-    margin: 0 0 1.5rem;
-    color: var(--text-muted);
-    line-height: 1.7;
-    font-size: 0.95rem;
-}
-
-.mobile-app-intro .section-pill {
-    margin-bottom: 1rem;
-}
-
-.mobile-app-download-btn {
-    display: inline-flex;
-    text-decoration: none;
-}
-
-.mobile-app-feature-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 1rem;
-}
-
-.mobile-app-feature-list li {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.85rem;
-    padding: 1rem 0;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--border-glass);
-    border-radius: 0;
-}
-
-.mobile-app-feature-list li:last-child {
-    border-bottom: none;
-}
-
-.mobile-app-feature-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 12px;
-    background: var(--gradient-hero);
-    color: white;
-    font-size: 1.1rem;
-    flex-shrink: 0;
-    box-shadow: 0 4px 12px var(--accent-glow);
-}
-
-.mobile-app-feature-list strong {
-    display: block;
-    margin-bottom: 0.25rem;
-    font-size: 0.95rem;
-    color: var(--text-main);
-}
-
-.mobile-app-feature-list p {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    line-height: 1.5;
-}
-
-.mobile-app-preview {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 0.5rem 0;
-    background: transparent;
-    border: none;
-    border-radius: 0;
-    box-shadow: none;
-}
-
-.mobile-app-preview-logo {
-    width: 5.5rem;
-    height: 5.5rem;
-    border-radius: 50%;
-    object-fit: cover;
-    object-position: center top;
-    margin-bottom: 1rem;
-}
-
-.mobile-app-preview strong {
-    font-family: "Outfit", sans-serif;
-    font-size: 1.35rem;
-    color: var(--text-main);
-}
-
-.mobile-app-preview small {
-    margin-top: 0.35rem;
-    color: var(--accent-primary);
-    font-size: 0.72rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}
-
-.mobile-app-version {
-    margin-top: 1rem;
-    padding: 0.35rem 0.85rem;
-    border-radius: 99px;
-    background: #f0f9ff;
-    color: var(--accent-sec);
-    font-size: 0.75rem;
-    font-weight: 700;
+.destination-swipe-dot.active {
+    width: 26px;
+    border-radius: 999px;
+    background: var(--accent-primary);
 }
 
 .destination-layout {
     display: grid;
     grid-template-columns: 1.3fr 1fr;
-    gap: 2rem;
-    margin-top: 1.5rem;
-    text-align: left;
+    gap: 1.5rem;
 }
 .destination-gallery {
     display: grid;
     grid-template-columns: 2fr 1fr;
     grid-template-rows: 1fr 1fr;
-    gap: 1rem;
-    min-height: 500px;
+    gap: 0.75rem;
+    height: 100%;
+    min-height: 420px;
+}
+.main-photo {
+    grid-row: 1 / 3;
+    border-radius: var(--radius-md);
+    background-size: cover;
+    background-position: center;
+    background-color: var(--bg-soft);
+    min-height: 220px;
+}
+.side-photo {
+    border-radius: var(--radius-md);
+    background-size: cover;
+    background-position: center;
+    background-color: var(--bg-soft);
+    min-height: 100px;
+}
+.gallery-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    font-weight: 600;
+    background: var(--bg-soft);
 }
 .destination-gallery.gallery-single {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(420px, 1fr);
-    min-height: 420px;
+    grid-template-rows: 1fr;
 }
 .destination-gallery.gallery-single .main-photo {
     grid-row: auto;
-    min-height: 420px;
 }
 .destination-gallery.gallery-duo {
-    grid-template-columns: 1.65fr 1fr;
-    grid-template-rows: minmax(360px, 1fr);
-    min-height: 360px;
-}
-.destination-gallery.gallery-duo .main-photo,
-.destination-gallery.gallery-duo .side-photo-top {
-    min-height: 360px;
+    grid-template-rows: 1fr;
 }
 .destination-gallery.gallery-duo .main-photo {
     grid-row: auto;
 }
-.main-photo,
-.side-photo {
-    border-radius: 20px;
-    background-size: cover;
-    background-position: center;
-    display: flex;
-    align-items: flex-end;
-    padding: 1.5rem;
-    position: relative;
-    overflow: hidden;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-}
-.main-photo.has-image::before,
-.side-photo.has-image::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(to top, rgba(0, 0, 0, 0.35), transparent);
-    pointer-events: none;
-}
-.gallery-placeholder {
-    align-items: center;
-    justify-content: center;
-    background: #f1f5f9;
-    color: var(--text-muted);
-    font-size: 0.95rem;
-    font-weight: 600;
-}
-.main-photo {
-    grid-row: span 2;
-}
-.side-photo-top,
-.side-photo-bottom {
-    min-height: 8rem;
-}
 .gallery-extra {
     grid-column: 1 / -1;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+    gap: 0.5rem;
 }
 .gallery-thumb {
-    aspect-ratio: 1;
-    border-radius: 14px;
+    height: 64px;
+    border-radius: 12px;
     background-size: cover;
     background-position: center;
-    border: 1px solid var(--border-glass);
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
-}
-.main-photo,
-.side-photo {
-    font-size: 1.15rem;
-    font-weight: 800;
-    color: white;
-    position: relative;
 }
 
 .destination-side {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1.25rem;
 }
-.spot-card,
-.info-card {
-    background: transparent;
-    padding: 0;
-    border-radius: 0;
-    border: none;
-    box-shadow: none;
-}
-
-.info-card {
-    border-top: 1px solid var(--border-glass);
-    padding-top: 1.5rem;
+.spot-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-sm);
 }
 .spot-card-head {
     display: flex;
-    justify-content: space-between;
     align-items: flex-start;
-    gap: 0.6rem;
+    justify-content: space-between;
+    gap: 1rem;
 }
 .spot-card-head h3 {
-    font-family: "Outfit", sans-serif;
-    font-size: 2.25rem;
-    line-height: 1.1;
-    margin: 0 0 0.5rem 0;
-    color: var(--text-main);
+    font-size: 1.35rem;
     font-weight: 800;
 }
-.spot-rating-empty {
-    color: var(--text-muted);
-}
-
-.section-empty,
-.review-empty,
-.spot-empty {
-    color: var(--text-muted);
-    font-weight: 600;
-    margin: 2rem auto 0;
-    max-width: 36rem;
-}
-
-.review-location {
-    color: var(--accent-primary);
-    font-size: 0.85rem;
-    font-weight: 700;
-    margin: 0 0 0.75rem;
-}
-
 .spot-card-head p {
+    margin: 0.25rem 0 0;
     color: var(--accent-primary);
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     font-size: 0.85rem;
-    margin: 0;
 }
 .spot-card-icons {
     display: flex;
     gap: 0.5rem;
 }
 .spot-card-icons button {
-    background: #f1f5f9;
-    border: 1px solid #e2e8f0;
-    color: var(--text-muted);
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    font-size: 1.2rem;
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 50%;
+    border: 1px solid var(--border-glass);
+    background: var(--bg-surface);
     cursor: pointer;
-    transition: all 0.2s;
+    font-size: 1rem;
+    color: var(--text-main);
+    transition: all 0.2s ease;
 }
 .spot-card-icons button:hover {
-    background: var(--text-main);
-    color: white;
-}
-
-.spot-rating {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 1.5rem 0 0 0;
-    color: var(--text-muted);
-    font-size: 0.95rem;
-    font-weight: 600;
-}
-.spot-rating span {
-    background: #fef3c7;
-    color: #d97706;
-    padding: 0.4rem 0.8rem;
-    border-radius: 8px;
-    font-weight: 800;
-    display: inline-block;
-    margin-right: 0.5rem;
-}
-
-.spot-description {
-    color: var(--text-muted);
-    line-height: 1.7;
-    margin: 1.5rem 0 0 0;
-    font-size: 1.05rem;
-}
-
-.spot-actions {
-    display: flex;
-    gap: 1rem;
-    margin-top: 2rem;
-}
-.spot-actions .solid-btn {
-    flex: 1;
-    padding: 1rem 0;
-    font-size: 1rem;
-    box-shadow: 0 4px 10px var(--accent-glow);
-}
-.spot-actions .ghost-pill {
-    background: transparent;
-    border: 1px solid var(--border-glass);
-    color: var(--text-main);
-    border-radius: 99px;
-    padding: 0 2rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.2s;
-}
-.spot-actions .ghost-pill:hover {
-    background: #f1f5f9;
-}
-
-.info-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border-glass);
-    margin-bottom: 2rem;
-    column-gap: 0.4rem;
-}
-.info-tabs button {
-    flex: 1;
-    background: transparent;
-    border: none;
-    padding: 1rem 0;
-    color: var(--text-muted);
-    font-weight: 700;
-    font-size: 0.95rem;
-    cursor: pointer;
-    position: relative;
-}
-.info-tabs button.active {
+    border-color: var(--accent-primary);
     color: var(--accent-primary);
 }
-.info-tabs button.active::after {
-    content: "";
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    width: 100%;
-    height: 2px;
-    background: var(--accent-primary);
+.spot-rating {
+    margin: 1rem 0 0;
+    font-size: 0.9rem;
+    color: var(--text-muted);
 }
-
+.spot-rating span {
+    color: var(--accent-gold);
+    font-weight: 800;
+}
+.spot-rating-empty {
+    color: var(--text-muted);
+}
+.spot-description {
+    margin: 1rem 0 0;
+    color: var(--text-muted);
+    line-height: 1.65;
+    font-size: 0.95rem;
+}
+.spot-actions {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+    flex-wrap: wrap;
+}
+.info-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-sm);
+}
+.info-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+.info-tabs button {
+    padding: 0.5rem 1rem;
+    border-radius: 999px;
+    border: none;
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    font-weight: 700;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+.info-tabs button.active {
+    background: var(--accent-glow);
+    color: var(--accent-primary);
+}
 .info-card ul {
     list-style: none;
-    padding: 0;
-    display: grid;
-    gap: 1.5rem;
     margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
 }
 .info-card li {
     display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--bg-soft);
+    font-size: 0.88rem;
 }
-.info-card strong {
-    color: var(--text-main);
-    font-weight: 800;
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+.info-card li:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
 }
-.info-card span {
+.info-card li strong {
     color: var(--text-muted);
-    font-size: 1.05rem;
-    font-weight: 500;
+    font-weight: 700;
+}
+.info-card li span {
+    color: var(--text-main);
+    font-weight: 700;
+    text-align: right;
 }
 
+/* ============ REVIEWS ============ */
+.reviews-section {
+    background: #ffffff;
+}
 .reviews-layout {
     display: grid;
-    grid-template-columns: 1fr 2fr;
-    gap: 2rem;
-    margin-top: 3rem;
-    text-align: left;
+    grid-template-columns: 320px 1fr;
+    gap: 1.5rem;
+    margin-top: 2rem;
+    align-items: start;
 }
 .rating-panel {
-    background: transparent;
-    padding: 0;
-    border-radius: 0;
-    border: none;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: flex-start;
-    text-align: left;
-    box-shadow: none;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 1.75rem;
+    text-align: center;
+    position: sticky;
+    top: 90px;
 }
 .rating-panel h3 {
-    font-family: "Outfit", sans-serif;
-    font-size: 4.5rem;
+    font-size: 3rem;
     font-weight: 800;
+    line-height: 1;
     color: var(--text-main);
-    margin: 0;
 }
 .rating-panel .stars {
-    font-size: 1.5rem;
-    color: #f59e0b;
-    margin: 0.5rem 0;
-    letter-spacing: 0.2em;
-    text-align: left;
+    color: var(--accent-gold);
+    font-size: 1.2rem;
+    letter-spacing: 0.1em;
+    margin: 0.4rem 0;
 }
-.rating-panel small {
+.rating-panel > small {
     color: var(--text-muted);
-    font-weight: 600;
-    margin-bottom: 2rem;
-    display: block;
-    text-align: left;
+    font-size: 0.82rem;
 }
 .rating-panel ul {
-    width: 100%;
+    list-style: none;
+    margin: 1.5rem 0;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    list-style: none;
-    padding: 0;
-    margin: 0 0 2rem 0;
+    gap: 0.6rem;
 }
 .rating-panel li {
-    display: grid;
-    grid-template-columns: 2rem 1fr 1.8rem;
-    align-items: center;
-    gap: 1rem;
-    color: var(--text-muted);
-    font-weight: 600;
-}
-.rating-panel b {
-    height: 6px;
-    background: #f1f5f9;
-    border-radius: 99px;
-    overflow: hidden;
-    display: block;
-}
-.rating-panel b i {
-    height: 100%;
-    background: #f59e0b;
-    display: block;
-    border-radius: 99px;
-}
-.rating-panel .solid-btn {
-    width: 100%;
-    margin-top: 0.9rem;
-}
-
-.review-stack {
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
+    align-items: center;
+    gap: 0.6rem;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    font-weight: 700;
+}
+.rating-panel li b {
+    flex: 1;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    overflow: hidden;
+}
+.rating-panel li b i {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent-gold), #fbbf24);
+}
+.review-stack {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.25rem;
 }
 .review-card {
-    background: transparent;
-    padding: 1.5rem 0;
-    border-radius: 0;
-    border: none;
-    border-bottom: 1px solid var(--border-glass);
-    margin: 0;
-    text-align: left;
-    box-shadow: none;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 1.5rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
-
-.review-stack .review-card:last-child {
-    border-bottom: none;
+.review-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-md);
 }
 .review-head {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.75rem;
 }
 .avatar {
-    width: 3rem;
-    height: 3rem;
+    width: 2.8rem;
+    height: 2.8rem;
     border-radius: 50%;
-    background: var(--gradient-hero);
-    display: grid;
-    place-items: center;
-    font-weight: 700;
-    font-size: 1rem;
-    color: white;
-}
-.review-head div {
-    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(
+        135deg,
+        var(--accent-primary),
+        var(--accent-soft)
+    );
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 0.95rem;
 }
 .review-head h4 {
-    color: var(--text-main);
-    font-size: 1.1rem;
-    font-weight: 700;
-    margin: 0 0 0.2rem 0;
+    font-size: 0.98rem;
+    font-weight: 800;
 }
 .review-head small {
     color: var(--text-muted);
-    font-size: 0.85rem;
-    font-weight: 600;
+    font-size: 0.78rem;
 }
-.review-head p {
-    color: #f59e0b;
-    letter-spacing: 0.1em;
-    margin: 0;
+.review-head > p {
+    margin-left: auto;
+    color: var(--accent-gold);
+    font-size: 0.92rem;
 }
-.review-card > p {
+.review-location {
+    margin: 1rem 0 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+}
+.review-card > p:last-child {
     color: var(--text-muted);
     line-height: 1.6;
-    margin: 1.25rem 0 0 0;
-    font-size: 1rem;
-    font-weight: 500;
+    font-size: 0.92rem;
 }
-.review-card footer {
-    border-top: 1px solid var(--border-glass);
-    margin-top: 1.5rem;
-    padding-top: 1.5rem;
-    display: flex;
-    gap: 1.5rem;
+.review-empty {
     color: var(--text-muted);
     font-weight: 600;
-    font-size: 0.9rem;
-}
-.load-more {
-    background: transparent;
-    border: 1px solid var(--border-glass);
-    color: var(--text-main);
-    padding: 1rem;
-    border-radius: 16px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-size: 1rem;
-    text-align: center;
-    display: block;
-    width: 100%;
-}
-.load-more:hover {
-    background: #f8fafc;
 }
 
-.events-section .section-head-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    text-align: left;
-    margin-bottom: 3rem;
-}
-.events-section .section-head-row div {
-    max-width: 600px;
-}
-.events-section .section-head-row .section-pill {
-    margin-bottom: 1rem;
-    display: inline-block;
-    margin-left: 0;
-}
-.events-section .section-head-row h2 {
-    font-family: "Outfit", sans-serif;
-    font-size: clamp(2.5rem, 4vw, 3.5rem);
-    margin: 0 0 1rem 0;
-    color: var(--text-main);
-    font-weight: 800;
-}
-.events-section .section-head-row .section-subtitle {
-    margin: 0;
-    width: auto;
-}
-.events-section .ghost-pill {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-glass);
-    color: var(--text-main);
-    border-radius: 99px;
-    padding: 0.6rem 1.5rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.2s;
-    white-space: nowrap;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.02);
-}
-.events-section .ghost-pill:hover {
-    background: #f1f5f9;
-}
-
+/* ============ EVENTS ============ */
 .event-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 300px));
-    gap: 0;
-    margin-top: 2rem;
-    justify-content: start;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
 }
 .event-card {
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid var(--border-glass);
-    border-left: 4px solid transparent;
-    border-radius: 0;
-    padding: 1.5rem 0 1.5rem 1rem;
-    text-align: left;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-glass);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    padding: 1.6rem;
     position: relative;
-    overflow: visible;
-    transition: color 0.2s ease;
-    margin: 0;
-    box-shadow: none;
+    overflow: hidden;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+.event-card::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 5px;
+    height: 100%;
+    background: linear-gradient(
+        180deg,
+        var(--accent-primary),
+        var(--accent-soft)
+    );
 }
 .event-card:hover {
-    transform: none;
-    box-shadow: none;
+    transform: translateY(-5px);
+    box-shadow: var(--shadow-lg);
 }
-
-.event-card::before {
-    display: none;
-}
-.event-orange {
-    border-left-color: #ea580c;
-}
-.event-teal {
-    border-left-color: #059669;
-}
-.event-gold {
-    border-left-color: #d97706;
-}
-.event-blue {
-    border-left-color: #0284c7;
-}
-
 .event-type {
+    display: inline-block;
+    padding: 0.3rem 0.75rem;
+    border-radius: 999px;
+    background: var(--accent-glow);
+    color: var(--accent-primary);
     font-size: 0.72rem;
     font-weight: 800;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--accent-sec);
-    margin: 0 0 0.75rem 0;
-    padding-top: 0;
+    letter-spacing: 0.04em;
 }
-.event-orange .event-type {
-    color: #ea580c;
-}
-.event-gold .event-type {
-    color: #d97706;
-}
-.event-blue .event-type {
-    color: #0284c7;
-}
-
 .event-card h3 {
-    font-family: "Outfit";
-    font-size: 1.15rem;
+    margin: 0.9rem 0 0.6rem;
+    font-size: 1.3rem;
     font-weight: 800;
-    color: var(--text-main);
-    margin: 0 0 0.75rem 0;
-    line-height: 1.3;
 }
 .event-card > p {
     color: var(--text-muted);
     line-height: 1.55;
-    margin: 0 0 1.25rem 0;
-    font-size: 0.88rem;
-    font-weight: 500;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    font-size: 0.92rem;
 }
 .event-card ul {
     list-style: none;
-    border-top: 1px solid var(--border-glass);
-    padding: 1rem 0 0 0;
-    display: grid;
-    gap: 0.5rem;
-    color: var(--text-muted);
+    margin: 1.1rem 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.event-card ul li {
+    font-size: 0.84rem;
     font-weight: 600;
-    font-size: 0.82rem;
-    margin: 0 0 1.25rem 0;
-}
-.event-card button {
-    width: 100%;
-    background: #f8fafc;
-    border: 1px solid var(--border-glass);
     color: var(--text-main);
-    padding: 0.75rem;
-    border-radius: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s;
-    margin-bottom: 0;
-    font-size: 0.88rem;
+    padding-left: 1.2rem;
+    position: relative;
 }
-.event-card button:hover {
-    background: var(--text-main);
-    color: white;
+.event-card ul li::before {
+    content: "•";
+    position: absolute;
+    left: 0;
+    color: var(--accent-primary);
+    font-weight: 800;
+}
+.event-card > button {
+    border: none;
+    background: transparent;
+    color: var(--accent-primary);
+    font-weight: 800;
+    font-size: 0.88rem;
+    cursor: pointer;
+    padding: 0;
 }
 
 .newsletter {
-    background: linear-gradient(135deg, #059669, #10b981);
-    padding: clamp(3.5rem, 6vw, 5rem) var(--section-x);
-    border-radius: 0;
+    margin-top: 2.5rem;
+    background: linear-gradient(135deg, #042f2e 0%, #0f766e 100%);
+    border-radius: var(--radius-lg);
+    padding: 2.75rem;
     text-align: center;
-    position: relative;
-    overflow: hidden;
-    margin-top: clamp(3rem, 5vw, 5rem);
-    margin-left: calc(-1 * var(--section-x));
-    margin-right: calc(-1 * var(--section-x));
-    width: auto;
-    box-shadow: none;
-}
-.newsletter::before {
-    content: "";
-    position: absolute;
-    width: 400px;
-    height: 400px;
-    background: radial-gradient(
-        circle,
-        rgba(255, 255, 255, 0.15) 0%,
-        transparent 70%
-    );
-    top: -200px;
-    right: -200px;
-    border-radius: 50%;
+    color: #ffffff;
+    box-shadow: var(--shadow-lg);
 }
 .newsletter h3 {
-    font-family: "Outfit", sans-serif;
-    font-size: 3rem;
-    color: white;
-    margin: 0 0 1rem 0;
+    font-size: 1.7rem;
     font-weight: 800;
 }
 .newsletter p {
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 1.1rem;
-    max-width: 600px;
-    margin: 0 auto 2.5rem;
-    font-weight: 500;
+    margin: 0.7rem auto 1.5rem;
+    max-width: 32rem;
+    color: rgba(255, 255, 255, 0.82);
+    line-height: 1.55;
 }
 .newsletter form {
     display: flex;
-    gap: 1rem;
-    max-width: 600px;
+    gap: 0.5rem;
+    max-width: 26rem;
     margin: 0 auto;
-    flex-wrap: wrap;
-    justify-content: center;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+    padding: 0.4rem;
 }
 .newsletter input {
     flex: 1;
-    min-width: 250px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 16px;
-    padding: 1rem 1.5rem;
-    color: white;
-    font-size: 1rem;
+    border: none;
     outline: none;
+    background: transparent;
+    padding: 0.6rem 1rem;
+    color: #ffffff;
+    font-size: 0.92rem;
+    min-width: 0;
 }
 .newsletter input::placeholder {
-    color: rgba(255, 255, 255, 0.7);
+    color: rgba(255, 255, 255, 0.65);
 }
 .newsletter button {
-    background: white;
-    color: #059669;
     border: none;
-    padding: 0 2rem;
-    border-radius: 16px;
-    font-weight: 800;
     cursor: pointer;
-    transition: transform 0.2s;
-}
-.newsletter button:hover {
-    transform: translateY(-2px);
+    padding: 0.65rem 1.4rem;
+    border-radius: 999px;
+    background: #ffffff;
+    color: var(--accent-primary);
+    font-weight: 800;
+    font-size: 0.88rem;
 }
 
+/* ============ FOOTER ============ */
 .site-footer {
-    --section-x: clamp(1.25rem, 4vw, 3rem);
-    width: 100%;
-    border-top: 1px solid var(--border-glass);
-    padding: clamp(3.5rem, 6vw, 5rem) 0 clamp(1.5rem, 3vw, 2rem);
-    background: var(--bg-surface);
-    margin-top: 0;
+    background: #042f2e;
+    color: rgba(255, 255, 255, 0.78);
+    padding: 3.5rem 1.25rem 1.5rem;
 }
 .footer-shell {
-    max-width: none;
-    margin: 0;
-    padding: 0 var(--section-x);
+    max-width: 1200px;
+    margin: 0 auto;
     display: grid;
-    grid-template-columns: 2fr 1fr 1fr 1fr;
-    gap: 4rem;
+    grid-template-columns: 1.6fr 1fr 1fr 1fr;
+    gap: 2rem;
 }
-.footer-shell .brand {
-    display: inline-flex;
-    margin-bottom: 1.5rem;
+.site-footer .brand {
+    color: #ffffff;
 }
-.footer-shell section p {
-    color: var(--text-muted);
+.site-footer .brand-copy small {
+    color: rgba(255, 255, 255, 0.6);
+}
+.site-footer section > p {
+    margin: 1rem 0;
     line-height: 1.6;
-    margin: 0 0 2rem 0;
-    font-size: 0.95rem;
-    font-weight: 500;
+    font-size: 0.9rem;
+    max-width: 22rem;
 }
 .social-row {
     display: flex;
-    gap: 1rem;
-    margin-top: 0.8rem;
+    gap: 0.6rem;
 }
 .social-row a {
-    width: 40px;
-    height: 40px;
+    width: 2.4rem;
+    height: 2.4rem;
     border-radius: 50%;
-    background: #f1f5f9;
-    display: grid;
-    place-items: center;
-    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.1);
+    color: #ffffff;
     text-decoration: none;
-    transition: all 0.2s;
-    border: 1px solid var(--border-glass);
+    font-weight: 700;
+    transition: background 0.2s ease;
 }
 .social-row a:hover {
-    background: var(--accent-primary);
-    color: white;
-    transform: translateY(-3px);
+    background: var(--accent-soft);
 }
-.footer-shell h4 {
-    color: var(--text-main);
-    font-size: 1.1rem;
+.site-footer h4 {
+    color: #ffffff;
+    font-size: 1rem;
     font-weight: 800;
-    margin: 0 0 1.5rem 0;
-    font-family: "Outfit";
+    margin-bottom: 1rem;
 }
-.footer-shell ul {
+.site-footer ul {
     list-style: none;
+    margin: 0;
     padding: 0;
-    display: grid;
-    gap: 1rem;
-    margin: 0.65rem 0 0 0;
-}
-.footer-shell li,
-.footer-shell a {
-    color: var(--text-muted);
-    text-decoration: none;
-    transition: color 0.2s;
-    font-size: 0.95rem;
     display: flex;
     flex-direction: column;
-    font-weight: 500;
+    gap: 0.6rem;
 }
-.footer-shell a:hover {
-    color: var(--accent-primary);
+.site-footer ul li,
+.site-footer ul li a {
+    font-size: 0.88rem;
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    transition: color 0.2s ease;
+}
+.site-footer ul li a:hover {
+    color: #ffffff;
 }
 .footer-bottom {
-    max-width: none;
-    margin: 4rem 0 0;
-    padding: 2rem var(--section-x) 0;
-    border-top: 1px solid var(--border-glass);
+    max-width: 1200px;
+    margin: 2.5rem auto 0;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
     display: flex;
     justify-content: space-between;
-    color: var(--text-muted);
-    font-size: 0.9rem;
-    font-weight: 500;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.82rem;
+    color: rgba(255, 255, 255, 0.55);
 }
 
-:deep(.leaflet-control-attribution) {
-    background: rgba(255, 255, 255, 0.8) !important;
-    color: var(--text-muted) !important;
-    font-size: 0.7rem;
-}
-:deep(.leaflet-control-attribution a) {
-    color: var(--accent-sec) !important;
-    font-weight: 700;
-}
-:deep(.leaflet-tooltip) {
-    background: white;
-    color: var(--text-main);
-    border: 1px solid var(--border-glass);
-    border-radius: 8px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-    font-family: "Plus Jakarta Sans", sans-serif;
-    font-weight: 700;
-    padding: 0.5rem 1rem;
-    font-size: 0.9rem;
+/* ============ RESPONSIVE ============ */
+@media (min-width: 769px) {
+    .destination-swipe-viewport {
+        padding: 0 4rem;
+        cursor: default;
+        user-select: auto;
+    }
+    .destination-swipe-viewport:active {
+        cursor: default;
+    }
 }
 
 @media (max-width: 1024px) {
-    .destination-layout,
-    .reviews-layout {
-        grid-template-columns: 1fr;
-    }
-    .destination-gallery {
-        min-height: 400px;
-    }
-    .footer-shell {
-        grid-template-columns: 1fr 1fr;
-        gap: 2rem;
-    }
-    .map-layout {
-        grid-template-columns: 1fr;
-    }
-    .spots-sidebar {
-        max-height: 350px;
-    }
     .mobile-app-feature {
-        grid-template-columns: 1fr;
-        gap: 1.5rem;
+        grid-template-columns: 1fr 1fr;
     }
     .mobile-app-preview {
-        grid-column: auto;
+        grid-column: 1 / -1;
         flex-direction: row;
-        gap: 1.25rem;
-        text-align: left;
         justify-content: center;
+        gap: 1rem;
     }
     .mobile-app-preview-logo {
         margin-bottom: 0;
     }
-    .event-grid {
-        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        justify-content: center;
+}
+
+@media (max-width: 900px) {
+    .reviews-layout {
+        grid-template-columns: 1fr;
+    }
+    .rating-panel {
+        position: static;
     }
 }
 
 @media (max-width: 768px) {
-    /* Hamburger button */
-    .hamburger-btn {
-        display: flex;
-    }
-    .nav-links {
-        display: none;
-    }
+    .nav-links,
     .auth-actions {
         display: none;
     }
-
-    /* Mobile nav drawer */
-    .mobile-nav {
+    .hamburger-btn {
         display: flex;
-        flex-direction: column;
-        padding: 0.5rem 1.25rem 1.5rem;
-        background: #ffffff;
-        border-top: 1px solid var(--border-glass);
-        box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
-    }
-    .mobile-nav-link {
-        display: block;
-        padding: 1rem 0.25rem;
-        color: var(--text-main);
-        font-weight: 600;
-        font-size: 1.05rem;
-        text-decoration: none;
-        border-bottom: 1px solid #f1f5f9;
-        transition: color 0.2s, padding-left 0.2s;
-    }
-    .mobile-nav-link:hover {
-        color: var(--accent-primary);
-        padding-left: 0.5rem;
-    }
-    .mobile-section-label {
-        margin: 1.25rem 0 0.65rem;
-        color: var(--text-muted);
-        font-size: 0.72rem;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-    }
-    .mobile-download-card {
-        margin-top: 0.25rem;
-    }
-    .mobile-download-link {
-        display: flex;
-        align-items: center;
-        gap: 0.85rem;
-        padding: 1rem;
-        text-decoration: none;
-        color: var(--text-main);
-        background: linear-gradient(
-            135deg,
-            rgba(2, 132, 199, 0.08) 0%,
-            rgba(16, 185, 129, 0.1) 100%
-        );
-        border: 1px solid rgba(16, 185, 129, 0.18);
-        border-radius: 16px;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .mobile-download-link:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 8px 20px rgba(16, 185, 129, 0.12);
-    }
-    .mobile-download-copy {
-        flex: 1;
-        min-width: 0;
-    }
-    .mobile-download-copy strong {
-        display: block;
-        font-size: 0.98rem;
-        font-weight: 700;
-        line-height: 1.3;
-    }
-    .mobile-download-copy small {
-        display: block;
-        margin-top: 0.2rem;
-        color: var(--accent-primary);
-        font-size: 0.72rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }
-    .mobile-download-icon {
-        width: 2.5rem;
-        height: 2.5rem;
-        border-radius: 50%;
-        object-fit: cover;
-        object-position: center top;
-        flex-shrink: 0;
-        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
-    }
-    .mobile-download-arrow {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 2rem;
-        height: 2rem;
-        border-radius: 50%;
-        background: var(--gradient-hero);
-        color: white;
-        font-size: 1rem;
-        font-weight: 700;
-        flex-shrink: 0;
-    }
-    .mobile-auth {
-        display: flex;
-        gap: 0.75rem;
-        margin-top: 1.25rem;
-        padding-top: 0.25rem;
-    }
-    .mobile-login-btn,
-    .mobile-auth .solid-btn {
-        flex: 1;
-        text-align: center;
-        padding: 0.85rem 1rem;
-        border-radius: 99px;
-        font-size: 0.9rem;
-        font-weight: 700;
-        cursor: pointer;
-        font-family: inherit;
-    }
-    .mobile-login-btn {
-        background: #ffffff;
-        color: var(--text-main);
-        border: 1px solid var(--border-glass);
-        text-decoration: none;
-        display: block;
-        transition: border-color 0.2s ease, color 0.2s ease;
-    }
-    .mobile-login-btn:hover {
-        border-color: var(--accent-primary);
-        color: var(--accent-primary);
-    }
-    .mobile-auth .solid-btn {
-        border: none;
     }
 
-    /* Mobile menu transition */
     .mobile-menu-enter-active {
         transition: all 0.3s ease;
     }
@@ -3459,580 +3083,128 @@ onBeforeUnmount(() => {
         transform: translateY(-10px);
     }
 
-    /* Top nav */
-    .top-nav {
-        padding: 0.75rem 1rem;
-    }
-    .brand-copy {
-        display: none;
-    }
-    .brand-icon {
-        width: 2.5rem;
-        height: 2.5rem;
-    }
-
-    /* Hero section */
     .hero-section {
-        flex-direction: column;
-        align-items: stretch;
-        justify-content: flex-start;
-        height: auto;
         min-height: auto;
-        padding: 6.5rem 1.25rem 2rem;
-        gap: 1.5rem;
-        overflow: visible;
+        padding: 6.5rem 0 0;
     }
-    .hero-section::before {
-        background: linear-gradient(
-            180deg,
-            rgba(15, 23, 42, 0.45) 0%,
-            rgba(15, 23, 42, 0.22) 45%,
-            rgba(15, 23, 42, 0.08) 100%
-        );
+    .hero-inner {
+        grid-template-columns: 1fr;
+        padding: 0 1.25rem;
+        gap: 0;
+    }
+    .hero-visual {
+        order: 1;
+        justify-content: center;
+        margin-left: 0;
     }
     .hero-content {
-        max-width: 100%;
-        margin-right: 0;
-        margin-bottom: 0;
+        order: 0;
     }
-    .hero-content h1 {
-        font-size: 2.2rem;
+    .hero-traveler-img {
+        height: clamp(360px, 65vw, 460px);
+    }
+    .hero-content {
+        align-items: center;
+        text-align: center;
+        padding-right: 0;
+        padding-bottom: 3rem;
     }
     .hero-subtitle {
-        font-size: 1rem;
-        margin-bottom: 1.25rem;
-    }
-    .hero-pill {
-        font-size: 0.7rem;
-        padding: 0.4rem 0.9rem;
-        margin-bottom: 1rem;
+        max-width: 100%;
     }
     .search-shell {
-        width: 100%;
         max-width: 100%;
     }
-    .search-shell input {
-        font-size: 0.85rem;
-        min-width: 0;
+    .hero-stats {
+        justify-content: center;
+        gap: 1.5rem;
     }
-    .search-shell button {
-        padding: 0.65rem 1rem;
-        font-size: 0.8rem;
-        flex-shrink: 0;
-    }
-    .search-result {
-        font-size: 0.8rem;
-        margin-top: 0.75rem;
-    }
-
-    /* Hero carousel on mobile */
-    .hero-spots-carousel {
-        position: relative;
-        bottom: auto;
-        left: auto;
-        right: auto;
-        max-width: 100%;
-        width: 100%;
-        margin-top: 0;
-        padding: 0.25rem 0 0;
-        gap: 0.75rem;
-        align-items: flex-end;
-        overflow-x: auto;
-        overflow-y: visible;
-    }
-    .spot-card-mini {
-        width: 140px;
-        height: 200px;
-        border-radius: 12px;
-    }
-    .spot-card-mini:hover,
-    .spot-card-mini-active {
-        transform: none;
-    }
-    .spot-card-mini-active {
-        border-width: 3px;
-        box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35);
-    }
-    .spot-card-mini-info {
-        padding: 1.5rem 0.75rem 0.75rem;
-    }
-    .spot-card-mini-info small {
-        font-size: 0.55rem;
-    }
-    .spot-card-mini-info strong {
-        font-size: 0.8rem;
-    }
-
-    /* Main content */
     .main-content {
         --section-x: 1rem;
     }
-
     .section-shell {
-        padding-top: 2.5rem;
-        padding-bottom: 2.5rem;
+        padding: 3rem var(--section-x);
     }
-
-    .events-section {
-        padding-bottom: 0;
-    }
-
-    /* Section headings */
-    .section-shell h2 {
-        font-size: 1.8rem;
-    }
-    .section-subtitle {
-        font-size: 0.95rem;
-    }
-    .section-pill {
-        font-size: 0.7rem;
-    }
-
-    /* Category chips */
-    .category-row {
-        gap: 0.5rem;
-        margin: 1.25rem 0;
-    }
-    .category-chip {
-        padding: 0.5rem 1rem;
-        font-size: 0.85rem;
-    }
-
-    /* Map section */
-    .map-card-head {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.75rem;
-        padding: 1rem 1.25rem;
-    }
-    .map-legend {
-        flex-wrap: wrap;
-        gap: 0.75rem;
-    }
-    .leaflet-map {
-        height: 350px;
-    }
-    .map-canvas-wrap {
-        padding: 0.5rem;
-    }
-    .spots-sidebar {
-        max-height: 280px;
-    }
-    .sidebar-head {
-        padding: 1rem;
-    }
-    .spot-list li {
-        padding: 1rem;
+    .app-section {
+        padding: 3.5rem var(--section-x);
     }
     .mobile-app-feature {
         grid-template-columns: 1fr;
-        padding: 1.5rem;
-        gap: 1.25rem;
+        padding: 0;
     }
     .mobile-app-preview {
         flex-direction: column;
-        text-align: center;
-    }
-    .mobile-app-preview-logo {
-        margin-bottom: 1rem;
-    }
-    .mobile-app-download-btn {
-        width: 100%;
-        justify-content: center;
-    }
-
-    /* Destination section */
-    .destination-swipe-meta {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-    .destination-gallery {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto;
-        min-height: auto;
-        gap: 0.75rem;
-    }
-    .destination-gallery.gallery-duo {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto;
-    }
-    .destination-gallery.gallery-single {
-        grid-template-rows: auto;
-        min-height: auto;
-    }
-    .destination-gallery.gallery-single .main-photo,
-    .destination-gallery.gallery-duo .main-photo,
-    .destination-gallery.gallery-duo .side-photo-top {
-        min-height: 14rem;
-    }
-    .main-photo {
-        grid-row: auto;
-        min-height: 14rem;
-    }
-    .side-photo {
-        min-height: 8rem;
-    }
-    .gallery-extra {
-        grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
-    }
-    .spot-card-head {
-        flex-direction: column;
-    }
-    .spot-card-head h3 {
-        font-size: 1.6rem;
-    }
-    .spot-actions {
-        flex-direction: column;
-    }
-    .spot-actions .ghost-pill {
-        text-align: center;
-        padding: 0.85rem;
-    }
-
-    /* Reviews */
-    .rating-panel h3 {
-        font-size: 3.5rem;
-    }
-
-    .review-card {
-        padding: 1.25rem 0;
-    }
-
-    /* Events */
-    .events-section .section-head-row {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 1rem;
-    }
-    .events-section .section-head-row h2 {
-        font-size: 1.8rem;
-    }
-    .event-grid {
-        grid-template-columns: 1fr;
-        justify-content: stretch;
-    }
-    .event-card {
-        padding: 1.25rem 0 1.25rem 0.85rem;
-    }
-
-    /* Newsletter */
-    .newsletter {
-        padding: 3rem var(--section-x);
-        margin-top: 2rem;
-    }
-    .newsletter h3 {
-        font-size: 1.8rem;
-    }
-    .newsletter p {
-        font-size: 0.95rem;
-    }
-    .newsletter form {
-        flex-direction: column;
-    }
-    .newsletter input {
-        min-width: unset;
-    }
-    .newsletter button {
-        padding: 0.85rem 2rem;
-    }
-
-    /* Footer */
-    .footer-shell {
-        grid-template-columns: 1fr;
-        gap: 2rem;
-    }
-    .footer-bottom {
-        flex-direction: column;
-        text-align: center;
-        gap: 0.75rem;
-    }
-    .site-footer {
-        padding: 3rem 0 1.5rem;
-    }
-}
-
-@media (max-width: 480px) {
-    .hero-section {
-        padding: 5.5rem max(1rem, env(safe-area-inset-left, 0)) 1.5rem;
-        gap: 1.25rem;
-    }
-    .hero-content h1 {
-        font-size: 1.85rem;
-    }
-    .hero-subtitle {
-        font-size: 0.95rem;
-        margin-bottom: 1rem;
-    }
-    .search-shell {
-        flex-wrap: wrap;
-        border-radius: 14px;
-    }
-    .search-shell button {
-        width: 100%;
-        margin-top: 0.35rem;
-        min-height: 44px;
-    }
-    .spot-card-mini {
-        width: 132px;
-        height: 188px;
-    }
-    .spot-card-mini-info strong {
-        font-size: 0.7rem;
-    }
-    .section-shell {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    .section-shell h2 {
-        font-size: 1.45rem;
-    }
-    .spot-card-head h3 {
-        font-size: 1.35rem;
-    }
-    .rating-panel h3 {
-        font-size: 2.75rem;
-    }
-    .newsletter h3 {
-        font-size: 1.45rem;
-    }
-    .destination-swipe-count {
-        font-size: 0.82rem;
-    }
-    .destination-swipe-hint-mobile {
-        font-size: 0.76rem;
-    }
-}
-
-/* Mobile UX polish — all sections & cards */
-@media (max-width: 768px) {
-    .tourism-page {
-        -webkit-tap-highlight-color: transparent;
-    }
-
-    .top-nav-shell {
-        padding-top: env(safe-area-inset-top, 0);
-    }
-
-    .section-shell {
-        padding-left: max(1rem, env(safe-area-inset-left, 0));
-        padding-right: max(1rem, env(safe-area-inset-right, 0));
-    }
-
-    .section-subtitle {
-        padding-inline: 0.15rem;
-        line-height: 1.65;
-    }
-
-    .section-empty {
-        padding-inline: 0.5rem;
-        font-size: 0.9rem;
-        line-height: 1.6;
-    }
-
-    /* Map section */
-    .map-layout {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        margin-top: 1.25rem;
-    }
-
-    .map-card {
-        order: 1;
-    }
-
-    .spots-sidebar {
-        order: 2;
-        max-height: min(320px, 42vh);
-    }
-
-    .spot-list li {
-        min-height: 44px;
-        align-items: center;
-    }
-
-    .category-row {
-        flex-wrap: nowrap;
-        justify-content: flex-start;
-        overflow-x: auto;
-        overscroll-behavior-x: contain;
-        scroll-snap-type: x proximity;
-        -webkit-overflow-scrolling: touch;
-        margin-inline: calc(-1 * var(--section-x));
-        padding-inline: var(--section-x);
-        padding-bottom: 0.35rem;
-        scrollbar-width: none;
-    }
-
-    .category-row::-webkit-scrollbar {
-        display: none;
-    }
-
-    .category-chip {
-        flex-shrink: 0;
-        scroll-snap-align: start;
-        min-height: 40px;
-        display: inline-flex;
-        align-items: center;
-    }
-
-    .mobile-app-feature {
-        margin-top: 1.5rem;
-    }
-
-    .mobile-app-feature-list li {
-        align-items: flex-start;
-    }
-
-    /* Destination swipe */
-    .destination-swipe-shell {
-        margin-top: 1.25rem;
-    }
-
-    .destination-swipe-stage {
-        margin-inline: calc(-1 * var(--section-x));
-        width: calc(100% + 2 * var(--section-x));
-    }
-
-    .destination-swipe-viewport {
-        padding: 0;
-    }
-
-    .destination-slide {
-        padding-inline: var(--section-x);
-        box-sizing: border-box;
     }
 
     .destination-layout {
-        margin-top: 0;
-        gap: 1.15rem;
-    }
-
-    .spot-card-head {
-        gap: 0.75rem;
-    }
-
-    .spot-card-icons button {
-        width: 44px;
-        height: 44px;
-    }
-
-    .spot-actions {
-        gap: 0.75rem;
-    }
-
-    .spot-actions .solid-btn,
-    .spot-actions .ghost-pill {
-        width: 100%;
-        min-height: 46px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .gallery-extra {
-        grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
-        gap: 0.5rem;
-    }
-
-    .destination-swipe-dots {
-        margin-top: 1rem;
-    }
-
-    /* Reviews */
-    .reviews-layout {
-        gap: 1.15rem;
-        margin-top: 2rem;
-    }
-
-    .review-head {
-        flex-wrap: wrap;
-        gap: 0.65rem;
-    }
-
-    .review-head p {
-        width: 100%;
-        margin: 0.25rem 0 0;
-    }
-
-    .rating-panel .solid-btn {
-        min-height: 46px;
-    }
-
-    /* Events */
-    .events-section .section-head-row {
-        margin-bottom: 1.25rem;
-        gap: 0.85rem;
-    }
-
-    .events-section .ghost-pill {
-        width: 100%;
-        min-height: 44px;
-        text-align: center;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .event-grid {
-        gap: 0;
-        margin-top: 1.25rem;
         grid-template-columns: 1fr;
     }
-
-    .event-card button {
-        min-height: 44px;
+    .destination-gallery {
+        min-height: 280px;
+    }
+    .destination-swipe-hint-mobile {
+        display: block;
+    }
+    .destination-swipe-arrow {
+        width: 2.5rem;
+        height: 2.5rem;
+        font-size: 1rem;
+    }
+    .destination-slide {
+        padding-inline: 0.25rem;
+        box-sizing: border-box;
     }
 
-    /* Newsletter */
-    .newsletter form {
-        width: 100%;
-        max-width: 100%;
-    }
-
-    .newsletter input,
-    .newsletter button {
-        width: 100%;
-        min-height: 46px;
-    }
-
-    /* Footer */
     .footer-shell {
-        padding-inline: max(1rem, env(safe-area-inset-left, 0))
-            max(1rem, env(safe-area-inset-right, 0));
+        grid-template-columns: 1fr 1fr;
     }
-
     .footer-bottom {
-        padding-inline: max(1rem, env(safe-area-inset-left, 0))
-            max(1rem, env(safe-area-inset-right, 0));
-    }
-
-    .social-row a {
-        width: 44px;
-        height: 44px;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
     }
 }
 
-@media (max-width: 640px) {
-    .event-grid {
+@media (max-width: 540px) {
+    .hero-content h1 {
+        font-size: clamp(2.2rem, 9vw, 3rem);
+    }
+    .search-shell {
+        flex-wrap: wrap;
+        border-radius: 20px;
+        padding: 0.75rem;
+    }
+    .search-shell button {
+        width: 100%;
+    }
+    .hero-stats {
+        gap: 1.1rem 1.5rem;
+    }
+    .why-list {
         grid-template-columns: 1fr;
     }
-
-    .hero-content h1 {
-        font-size: 2rem;
+    .why-item:nth-child(odd) {
+        border-right: none;
+        padding-right: 0;
     }
-
-    .leaflet-map {
-        height: min(320px, 52vh);
+    .why-item:nth-child(even) {
+        padding-left: 0;
     }
-
-    .main-photo,
-    .destination-gallery.gallery-single .main-photo {
-        min-height: 12rem;
+    .tips-list {
+        grid-template-columns: 1fr;
     }
-
-    .side-photo {
-        min-height: 7rem;
+    .tips-divider {
+        display: none;
+    }
+    .footer-shell {
+        grid-template-columns: 1fr;
+    }
+    .newsletter form {
+        flex-direction: column;
+        border-radius: 18px;
+    }
+    .newsletter button {
+        width: 100%;
     }
 }
 </style>

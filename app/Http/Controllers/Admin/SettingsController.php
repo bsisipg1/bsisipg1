@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Enums\LocationGalleryType;
 use App\Http\Controllers\Controller;
 use App\Models\AppHeroSection;
+use App\Models\AppSetting;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
@@ -17,12 +18,29 @@ class SettingsController extends Controller
     public function index(): Response
     {
         return Inertia::render('admin/Settings', [
+            'appDownloadUrl' => AppSetting::get(AppSetting::APP_DOWNLOAD_URL, AppSetting::DEFAULT_APP_DOWNLOAD_URL),
             'heroSections' => AppHeroSection::query()
                 ->orderBy('sort_order')
                 ->orderBy('id')
                 ->get()
                 ->map(fn (AppHeroSection $section) => $this->formatHeroSection($section)),
         ]);
+    }
+
+    public function updateAppSettings(Request $request): RedirectResponse
+    {
+        $validated = $request->validate([
+            'app_download_url' => ['nullable', 'url', 'max:2048'],
+        ]);
+
+        AppSetting::set(
+            AppSetting::APP_DOWNLOAD_URL,
+            $validated['app_download_url'] ?? null,
+        );
+
+        return redirect()
+            ->route('admin.settings')
+            ->with('success', 'App settings saved successfully.');
     }
 
     public function editHeroSection(AppHeroSection $heroSection): Response
