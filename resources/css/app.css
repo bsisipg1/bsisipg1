@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+@source '../**/*.vue';
+
+@theme {
+    --font-sans:
+        "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif,
+        "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
+        "Noto Color Emoji";
+    --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+
+    --color-background: hsl(0 0% 100%);
+    --color-foreground: hsl(222 47% 11%);
+    --color-card: hsl(0 0% 100%);
+    --color-card-foreground: hsl(222 47% 11%);
+    --color-popover: hsl(0 0% 100%);
+    --color-popover-foreground: hsl(222 47% 11%);
+    --color-primary: hsl(161 94% 30%);
+    --color-primary-foreground: hsl(0 0% 100%);
+    --color-secondary: hsl(210 40% 98%);
+    --color-secondary-foreground: hsl(222 47% 11%);
+    --color-muted: hsl(210 40% 98%);
+    --color-muted-foreground: hsl(215 16% 47%);
+    --color-accent: hsl(160 84% 95%);
+    --color-accent-foreground: hsl(161 94% 30%);
+    --color-destructive: hsl(0 84.2% 60.2%);
+    --color-destructive-foreground: hsl(0 0% 98%);
+    --color-border: hsl(214 32% 91%);
+    --color-input: hsl(214 32% 91%);
+    --color-ring: hsl(161 94% 30%);
+    --color-tourism: hsl(160 84% 39%);
+    --color-tourism-dark: hsl(161 94% 30%);
+    --color-tourism-blue: hsl(199 98% 39%);
+    --color-chart-1: hsl(160 84% 39%);
+    --color-chart-2: hsl(199 98% 39%);
+    --color-chart-3: hsl(47 96% 53%);
+    --color-chart-4: hsl(280 65% 60%);
+    --color-chart-5: hsl(12 76% 61%);
+
+    --radius-lg: 0.5rem;
+    --radius-md: calc(0.5rem - 2px);
+    --radius-sm: calc(0.5rem - 4px);
+
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground antialiased;
+        font-family: var(--font-sans);
+    }
+}
