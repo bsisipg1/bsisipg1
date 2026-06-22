@@ -7,7 +7,7 @@ import {
     ref,
     watch,
 } from "vue";
-import { Link } from "@inertiajs/vue3";
+import { Link, router } from "@inertiajs/vue3";
 
 const props = defineProps({
     locations: {
@@ -86,34 +86,14 @@ const mobileMenuOpen = ref(false);
 const navScrolled = ref(false);
 const downloadsOpen = ref(false);
 const downloadsDropdownRef = ref(null);
+const showDownloadModal = ref(false);
 
 const filteredDestinations = computed(() => {
-    const term = searchTerm.value.trim().toLowerCase();
-
     return props.locations.filter((destination) => {
-        const categoryMatch =
+        return (
             activeCategory.value === "all" ||
-            destination.category === activeCategory.value;
-
-        if (!categoryMatch) {
-            return false;
-        }
-
-        if (!term) {
-            return true;
-        }
-
-        const haystack = [
-            destination.name,
-            destination.category_label,
-            destination.summary,
-            destination.description,
-            destination.category,
-        ]
-            .join(" ")
-            .toLowerCase();
-
-        return haystack.includes(term);
+            destination.category === activeCategory.value
+        );
     });
 });
 
@@ -144,21 +124,13 @@ let destinationMouseMoveHandler = null;
 let destinationMouseUpHandler = null;
 
 const resultMessage = computed(() => {
-    if (!searchTerm.value.trim()) {
-        if (props.locations.length === 0) {
-            return "No destinations available yet";
-        }
-
-        return `${props.locations.length} destination${
-            props.locations.length === 1 ? "" : "s"
-        } across Baao`;
+    if (props.locations.length === 0) {
+        return "No destinations available yet";
     }
 
-    if (filteredDestinations.value.length === 0) {
-        return "No exact match. Try another keyword.";
-    }
-
-    return `${filteredDestinations.value.length} destination matches`;
+    return `${props.locations.length} destination${
+        props.locations.length === 1 ? "" : "s"
+    } across Baao`;
 });
 
 const averageRating = computed(
@@ -279,6 +251,15 @@ const heroStats = computed(() => [
     },
 ]);
 
+function submitSearch() {
+    const query = searchTerm.value.trim();
+    if (!query) {
+        return;
+    }
+
+    router.get("/search", { q: query });
+}
+
 function formatCoordinates(latitude, longitude) {
     return `${Number(latitude).toFixed(5)}, ${Number(longitude).toFixed(5)}`;
 }
@@ -326,6 +307,11 @@ function syncSelectionAfterFilter() {
     if (!hasSelected) {
         selectedDestinationId.value = filteredDestinations.value[0].id;
     }
+}
+
+function selectCategory(categoryKey) {
+    activeCategory.value = categoryKey;
+    syncSelectionAfterFilter();
 }
 
 function selectDestination(destinationId) {
@@ -448,8 +434,6 @@ function handleDestinationMouseDown(event) {
 }
 
 watch(searchTerm, () => {
-    syncSelectionAfterFilter();
-
     if (searchTerm.value.trim()) {
         stopTypingAnimation();
     } else if (!searchInputFocused.value) {
@@ -471,6 +455,20 @@ function toggleDownloads() {
     downloadsOpen.value = !downloadsOpen.value;
 }
 
+function openDownloadModal() {
+    showDownloadModal.value = true;
+}
+
+function closeDownloadModal() {
+    showDownloadModal.value = false;
+}
+
+function handleDownloadModalKeydown(event) {
+    if (event.key === "Escape") {
+        closeDownloadModal();
+    }
+}
+
 function handleDocumentClick(event) {
     if (
         downloadsDropdownRef.value &&
@@ -487,6 +485,7 @@ onMounted(() => {
 
     window.addEventListener("scroll", handleScroll, { passive: true });
     document.addEventListener("click", handleDocumentClick);
+    document.addEventListener("keydown", handleDownloadModalKeydown);
     handleScroll();
     startTypingAnimation();
 });
@@ -501,6 +500,7 @@ onBeforeUnmount(() => {
 
     window.removeEventListener("scroll", handleScroll);
     document.removeEventListener("click", handleDocumentClick);
+    document.removeEventListener("keydown", handleDownloadModalKeydown);
     stopTypingAnimation();
 });
 </script>
@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
                         resorts. Plan your trip and start exploring.
                     </p>
 
-                    <form class="search-shell" @submit.prevent>
+                    <form class="search-shell" @submit.prevent="submitSearch">
                         <span class="search-icon">⌕</span>
                         <input
                             v-model="searchTerm"
@@ -1006,10 +1006,18 @@ onBeforeUnmount(() => {
                                                         </p>
                                                     </div>
                                                     <div class="spot-card-icons">
-                                                        <button type="button">
+                                                        <button
+                                                            type="button"
+                                                            aria-label="Save to favorites"
+                                                            @click="openDownloadModal"
+                                                        >
                                                             ♡
                                                         </button>
-                                                        <button type="button">
+                                                        <button
+                                                            type="button"
+                                                            aria-label="Open location"
+                                                            @click="openDownloadModal"
+                                                        >
                                                             ↗
                                                         </button>
                                                     </div>
@@ -1049,12 +1057,14 @@ onBeforeUnmount(() => {
                                                     <button
                                                         type="button"
                                                         class="solid-btn"
+                                                        @click="openDownloadModal"
                                                     >
                                                         Get Directions
                                                     </button>
                                                     <button
                                                         type="button"
                                                         class="ghost-pill"
+                                                        @click="openDownloadModal"
                                                     >
                                                         Save
                                                     </button>
@@ -1395,6 +1405,70 @@ onBeforeUnmount(() => {
                 <p>Made with care for Baao</p>
             </div>
         </footer>
+
+        <Teleport to="body">
+            <Transition name="download-modal">
+                <div
+                    v-if="showDownloadModal"
+                    class="download-modal-backdrop"
+                    @click.self="closeDownloadModal"
+                >
+                    <div
+                        class="download-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="download-modal-title"
+                    >
+                        <button
+                            type="button"
+                            class="download-modal-close"
+                            aria-label="Close"
+                            @click="closeDownloadModal"
+                        >
+                            ×
+                        </button>
+
+                        <img
+                            class="download-modal-logo"
+                            :src="appLogo"
+                            alt="i-Baao app logo"
+                        />
+
+                        <p class="download-modal-eyebrow">Available on mobile</p>
+                        <h2 id="download-modal-title">
+                            Download the i-Baao app to continue
+                        </h2>
+                        <p class="download-modal-copy">
+                            Get directions, save favorites, and explore every
+                            destination in Baao with the official i-Baao tourism
+                            app.
+                        </p>
+
+                        <a
+                            v-if="appDownloadUrl"
+                            :href="appDownloadUrl"
+                            class="download-modal-btn"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                        >
+                            Download the App
+                        </a>
+                        <p v-else class="download-modal-note">
+                            The download link will be available soon. Please check
+                            back later.
+                        </p>
+
+                        <button
+                            type="button"
+                            class="download-modal-dismiss"
+                            @click="closeDownloadModal"
+                        >
+                            Maybe later
+                        </button>
+                    </div>
+                </div>
+            </Transition>
+        </Teleport>
     </div>
 </template>
 
@@ -2592,6 +2666,139 @@ h4 {
     border-color: var(--accent-primary);
     color: var(--accent-primary);
 }
+
+/* ============ DOWNLOAD MODAL ============ */
+.download-modal-backdrop {
+    --text-main: #0c2926;
+    --text-muted: #5e7873;
+    --accent-primary: #0f766e;
+    --accent-soft: #14b8a6;
+    --accent-glow: rgba(15, 118, 110, 0.18);
+    --bg-soft: #f4f7f6;
+    --shadow-lg: 0 26px 60px rgba(12, 41, 38, 0.16);
+
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.25rem;
+    background: rgba(12, 41, 38, 0.45);
+}
+
+.download-modal {
+    position: relative;
+    width: 100%;
+    max-width: 420px;
+    padding: 2rem 1.75rem 1.5rem;
+    border-radius: 1.25rem;
+    background: #ffffff;
+    text-align: center;
+    box-shadow: var(--shadow-lg);
+}
+
+.download-modal-close {
+    position: absolute;
+    top: 0.85rem;
+    right: 0.85rem;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    color: var(--text-muted);
+    font-size: 1.35rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.download-modal-logo {
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: 50%;
+    object-fit: cover;
+    margin: 0 auto 1rem;
+    display: block;
+}
+
+.download-modal-eyebrow {
+    margin: 0 0 0.35rem;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-primary);
+}
+
+.download-modal h2 {
+    margin: 0;
+    font-family: "Outfit", sans-serif;
+    font-size: 1.45rem;
+    line-height: 1.25;
+    color: var(--text-main);
+}
+
+.download-modal-copy {
+    margin: 0.85rem 0 1.35rem;
+    color: var(--text-muted);
+    line-height: 1.65;
+    font-size: 0.95rem;
+}
+
+.download-modal-btn {
+    display: inline-flex;
+    width: 100%;
+    justify-content: center;
+    text-decoration: none;
+    padding: 0.85rem 1.4rem;
+    border: none;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #0f766e, #14b8a6);
+    color: #ffffff !important;
+    font-weight: 700;
+    font-size: 0.95rem;
+    box-shadow: 0 10px 24px rgba(15, 118, 110, 0.18);
+}
+
+.download-modal-note {
+    margin: 0 0 1rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.download-modal-dismiss {
+    margin-top: 0.85rem;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.download-modal-enter-active,
+.download-modal-leave-active {
+    transition: opacity 0.2s ease;
+}
+
+.download-modal-enter-active .download-modal,
+.download-modal-leave-active .download-modal {
+    transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.download-modal-enter-from,
+.download-modal-leave-to {
+    opacity: 0;
+}
+
+.download-modal-enter-from .download-modal,
+.download-modal-leave-to .download-modal {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+}
+
 .spot-rating {
     margin: 1rem 0 0;
     font-size: 0.9rem;

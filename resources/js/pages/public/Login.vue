@@ -100,15 +100,7 @@ const submit = () => {
     justify-content: center;
     padding: 2rem 1rem;
     font-family: "Plus Jakarta Sans", sans-serif;
-    background:
-        linear-gradient(
-            135deg,
-            rgba(5, 150, 105, 0.92) 0%,
-            rgba(16, 185, 129, 0.88) 45%,
-            rgba(2, 132, 199, 0.85) 100%
-        ),
-        url("https://images.unsplash.com/photo-1542224566-6e85f2e6772f?auto=format&fit=crop&w=1920&q=80")
-            center / cover no-repeat;
+    background: #ffffff;
 }
 
 .login-shell {
@@ -119,7 +111,7 @@ const submit = () => {
 .back-link {
     display: inline-block;
     margin-bottom: 1rem;
-    color: rgba(255, 255, 255, 0.9);
+    color: var(--text-muted);
     text-decoration: none;
     font-size: 0.875rem;
     font-weight: 600;
@@ -127,16 +119,15 @@ const submit = () => {
 }
 
 .back-link:hover {
-    color: #ffffff;
+    color: var(--accent-primary);
 }
 
 .login-card {
-    background: rgba(255, 255, 255, 0.97);
-    border: 1px solid rgba(255, 255, 255, 0.6);
+    background: #ffffff;
+    border: 1px solid var(--border);
     border-radius: 1.25rem;
     padding: 2rem;
-    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
-    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
 }
 
 .login-header {

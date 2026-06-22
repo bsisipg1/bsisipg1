@@ -6,16 +6,18 @@ use App\Enums\LocationCategory;
 use App\Enums\LocationGalleryType;
 use App\Enums\UserRole;
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Public\Concerns\FormatsPublicLocations;
 use App\Models\AppSetting;
 use App\Models\Event;
 use App\Models\Location;
 use App\Models\LocationRating;
-use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class HomeController extends Controller
 {
+    use FormatsPublicLocations;
+
     public function __invoke(): Response
     {
         $appUserRatings = fn ($query) => $query
@@ -31,7 +33,7 @@ class HomeController extends Controller
             ->withAvg(['ratings' => $appUserRatings], 'rating')
             ->latest()
             ->get()
-            ->map(fn (Location $location) => $this->formatLocation($location));
+            ->map(fn (Location $location) => $this->formatPublicLocation($location));
 
         $usedCategories = $locations->pluck('category')->unique()->values()->all();
 
@@ -62,33 +64,6 @@ class HomeController extends Controller
             'reviewSummary' => $this->buildReviewSummary(),
             'recentReviews' => $this->buildRecentReviews(),
         ]);
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function formatLocation(Location $location): array
-    {
-        return [
-            'id' => $location->id,
-            'name' => $location->name,
-            'map_label' => Str::words($location->name, 2, ''),
-            'category' => $location->category->value,
-            'category_label' => $location->category->label(),
-            'description' => $location->description,
-            'summary' => Str::limit($location->description, 140),
-            'latitude' => (float) $location->latitude,
-            'longitude' => (float) $location->longitude,
-            'image_url' => $location->image_url,
-            'gallery_images' => $location->gallery
-                ->map(fn ($item) => $item->url)
-                ->values()
-                ->all(),
-            'average_rating' => $location->ratings_avg_rating !== null
-                ? round((float) $location->ratings_avg_rating, 1)
-                : null,
-            'ratings_count' => (int) $location->ratings_count,
-        ];
     }
 
     /**
