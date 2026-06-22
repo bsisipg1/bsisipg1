@@ -41,3 +41,31 @@ test('admin users page shows registered users', function () {
 test('guest cannot access admin users page', function () {
     $this->get('/admin/users')->assertRedirect('/login');
 });
+
+test('admin can delete an app user', function () {
+    $admin = User::factory()->admin()->create();
+    $appUser = User::factory()->appUser()->create([
+        'name' => 'Mobile User',
+        'email' => 'mobile@baaotourism.test',
+    ]);
+
+    actingAs($admin)
+        ->delete("/admin/users/{$appUser->id}")
+        ->assertRedirect(route('admin.users'))
+        ->assertSessionHas('success', 'App user deleted successfully.');
+
+    expect(User::query()->find($appUser->id))->toBeNull();
+});
+
+test('admin cannot delete another administrator', function () {
+    $admin = User::factory()->admin()->create();
+    $otherAdmin = User::factory()->admin()->create([
+        'email' => 'other-admin@baaotourism.test',
+    ]);
+
+    actingAs($admin)
+        ->delete("/admin/users/{$otherAdmin->id}")
+        ->assertForbidden();
+
+    expect(User::query()->find($otherAdmin->id))->not->toBeNull();
+});

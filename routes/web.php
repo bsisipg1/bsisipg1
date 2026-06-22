@@ -51,6 +51,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         Route::put('events/{event}', [EventController::class, 'update'])->name('events.update');
         Route::delete('events/{event}', [EventController::class, 'destroy'])->name('events.destroy');
         Route::get('users', [UserController::class, 'index'])->name('users');
+        Route::delete('users/{user}', [UserController::class, 'destroy'])->name('users.destroy');
         Route::get('reviews', [ReviewController::class, 'index'])->name('reviews');
         Route::get('settings', [SettingsController::class, 'index'])->name('settings');
         Route::put('settings/app', [SettingsController::class, 'updateAppSettings'])->name('settings.app.update');
