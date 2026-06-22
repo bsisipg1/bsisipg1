@@ -924,17 +924,20 @@ onBeforeUnmount(() => {
                                                 galleryLayoutClass(destination)
                                             "
                                         >
-                                            <div
+                                            <img
                                                 v-if="
                                                     getFeaturedGalleryImages(
                                                         destination,
                                                     )[0]
                                                 "
                                                 class="main-photo has-image"
-                                                :style="{
-                                                    backgroundImage: `url('${getFeaturedGalleryImages(destination)[0]}')`,
-                                                }"
-                                            ></div>
+                                                :src="
+                                                    getFeaturedGalleryImages(
+                                                        destination,
+                                                    )[0]
+                                                "
+                                                :alt="`${destination.name} photo`"
+                                            />
                                             <div
                                                 v-else
                                                 class="main-photo gallery-placeholder"
@@ -942,29 +945,35 @@ onBeforeUnmount(() => {
                                                 No image available
                                             </div>
 
-                                            <div
+                                            <img
                                                 v-if="
                                                     getFeaturedGalleryImages(
                                                         destination,
                                                     )[1]
                                                 "
                                                 class="side-photo side-photo-top has-image"
-                                                :style="{
-                                                    backgroundImage: `url('${getFeaturedGalleryImages(destination)[1]}')`,
-                                                }"
-                                            ></div>
+                                                :src="
+                                                    getFeaturedGalleryImages(
+                                                        destination,
+                                                    )[1]
+                                                "
+                                                :alt="`${destination.name} photo 2`"
+                                            />
 
-                                            <div
+                                            <img
                                                 v-if="
                                                     getFeaturedGalleryImages(
                                                         destination,
                                                     )[2]
                                                 "
                                                 class="side-photo side-photo-bottom has-image"
-                                                :style="{
-                                                    backgroundImage: `url('${getFeaturedGalleryImages(destination)[2]}')`,
-                                                }"
-                                            ></div>
+                                                :src="
+                                                    getFeaturedGalleryImages(
+                                                        destination,
+                                                    )[2]
+                                                "
+                                                :alt="`${destination.name} photo 3`"
+                                            />
 
                                             <div
                                                 v-if="
@@ -974,7 +983,7 @@ onBeforeUnmount(() => {
                                                 "
                                                 class="gallery-extra"
                                             >
-                                                <div
+                                                <img
                                                     v-for="(
                                                         image, index
                                                     ) in getExtraGalleryImages(
@@ -982,11 +991,10 @@ onBeforeUnmount(() => {
                                                     )"
                                                     :key="`${destination.id}-gallery-${index}`"
                                                     class="gallery-thumb has-image"
-                                                    :style="{
-                                                        backgroundImage: `url('${image}')`,
-                                                    }"
+                                                    :src="image"
+                                                    :alt="`${destination.name} gallery photo ${index + 4}`"
                                                     :title="`${destination.name} gallery photo ${index + 4}`"
-                                                ></div>
+                                                />
                                             </div>
                                         </div>
 
@@ -2573,16 +2581,20 @@ h4 {
 .main-photo {
     grid-row: 1 / 3;
     border-radius: var(--radius-md);
-    background-size: cover;
-    background-position: center;
-    background-color: var(--bg-soft);
+    background-color: #f4f7f6;
     min-height: 220px;
+}
+.main-photo.has-image,
+.side-photo.has-image,
+.gallery-thumb.has-image {
+    width: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center;
 }
 .side-photo {
     border-radius: var(--radius-md);
-    background-size: cover;
-    background-position: center;
-    background-color: var(--bg-soft);
+    background-color: #f4f7f6;
     min-height: 100px;
 }
 .gallery-placeholder {
@@ -2615,8 +2627,7 @@ h4 {
 .gallery-thumb {
     height: 64px;
     border-radius: 12px;
-    background-size: cover;
-    background-position: center;
+    background-color: #f4f7f6;
 }
 
 .destination-side {
@@ -3347,7 +3358,33 @@ h4 {
         grid-template-columns: 1fr;
     }
     .destination-gallery {
-        min-height: 280px;
+        min-height: auto;
+        height: auto;
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        gap: 0.65rem;
+    }
+    .destination-gallery .main-photo {
+        grid-row: auto;
+        width: 100%;
+        min-height: 220px;
+        aspect-ratio: 4 / 3;
+    }
+    .destination-gallery.gallery-duo,
+    .destination-gallery.gallery-multi {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto auto;
+    }
+    .destination-gallery.gallery-duo .main-photo,
+    .destination-gallery.gallery-multi .main-photo {
+        grid-column: 1 / -1;
+    }
+    .destination-gallery .side-photo {
+        min-height: 120px;
+        aspect-ratio: 4 / 3;
+    }
+    .destination-gallery .gallery-extra {
+        grid-column: 1 / -1;
     }
     .destination-swipe-hint-mobile {
         display: block;
